@@ -135,6 +135,7 @@ class Attribute(Generic[_T]):
     metadata: dict[Any, Any]
     type: type[_T] | None
     kw_only: bool
+    positional_only: bool
     on_setattr: _OnSetAttrType
     # This is not literally true: alias can be None during construction, but is
     # guaranteed to be a str for downstream use. It is centrally resolved before
@@ -180,6 +181,7 @@ def attrib(
     converter: None = ...,
     factory: None = ...,
     kw_only: bool | None = ...,
+    positional_only: bool = ...,
     eq: _EqOrderType | None = ...,
     order: _EqOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
@@ -204,6 +206,7 @@ def attrib(
     | None = ...,
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
+    positional_only: bool = ...,
     eq: _EqOrderType | None = ...,
     order: _EqOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
@@ -227,6 +230,7 @@ def attrib(
     | None = ...,
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
+    positional_only: bool = ...,
     eq: _EqOrderType | None = ...,
     order: _EqOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
@@ -250,6 +254,7 @@ def attrib(
     | None = ...,
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
+    positional_only: bool = ...,
     eq: _EqOrderType | None = ...,
     order: _EqOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,

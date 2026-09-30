@@ -204,6 +204,27 @@ Traceback (most recent call last):
 ValueError: No mandatory attributes allowed after an attribute with a default value or factory.  Attribute in question: Attribute(name='b', default=NOTHING, validator=None, repr=True, cmp=True, hash=None, init=True, converter=None, metadata=mappingproxy({}), type=int, kw_only=False)
 ```
 
+### Positional-only Attributes
+
+Attributes can also be made [positional-only](https://docs.python.org/3/glossary.html#positional-only-parameter).
+This prevents callers from passing them as keyword arguments, which keeps the field names free to change without breaking callers:
+
+```{doctest}
+>>> @define
+... class A:
+...     a: int = field(positional_only=True)
+...     b: int
+>>> A(1, b=2)
+A(a=1, b=2)
+>>> A(a=1, b=2)
+Traceback (most recent call last):
+...
+TypeError: A.__init__() got some positional-only arguments passed as keyword arguments: 'a'
+```
+
+Positional-only attributes must be declared before any regular (positional-or-keyword) attributes -- including inherited ones -- and an attribute can't be positional-only and keyword-only at the same time.
+Violations are rejected with a `ValueError` when the class is created.
+
 (asdict)=
 
 ## Converting to Collections Types
