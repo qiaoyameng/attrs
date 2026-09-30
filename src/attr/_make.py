@@ -12,7 +12,7 @@ import types
 import unicodedata
 import weakref
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from functools import cached_property
 from typing import Any, NamedTuple, TypeVar
 
@@ -29,6 +29,7 @@ from ._compat import (
 )
 from .exceptions import (
     DefaultAlreadySetError,
+    FieldTransformerConflictError,
     FrozenInstanceError,
     NotAnAttrsClassError,
     UnannotatedAttributeError,
@@ -55,6 +56,11 @@ _EMPTY_METADATA_SINGLETON = types.MappingProxyType({})
 _SENTINEL = object()
 
 _DEFAULT_ON_SETATTR = setters.pipe(setters.convert, setters.validate)
+_field_id_counter = itertools.count(1)
+
+
+def _next_field_id():
+    return next(_field_id_counter)
 
 
 class _Nothing(enum.Enum):
@@ -376,6 +382,237 @@ def _collect_base_attrs_broken(cls, taken_attr_names):
             base_attr_map[a.name] = base_cls
 
     return base_attrs, base_attr_map
+
+
+_STAGED_FIELD_ATTRIBUTES = (
+    "name",
+    "default",
+    "validator",
+    "repr",
+    "eq",
+    "eq_key",
+    "order",
+    "order_key",
+    "hash",
+    "init",
+    "metadata",
+    "type",
+    "converter",
+    "kw_only",
+    "on_setattr",
+    "alias",
+)
+
+
+class FieldTransformerStage(NamedTuple):
+    """
+    A named stage for `combine_field_transformers()`.
+
+    Attributes:
+        name:
+            Name used in conflict reports.
+        transformer:
+            The regular field transformer callable.
+        apply_on_inheritance:
+            Whether the stage runs again for fields a subclass introduces.
+        overridable_attributes:
+            Field attributes that later stages may override.
+
+    .. versionadded:: 26.3.0
+    """
+
+    name: str
+    transformer: Callable[
+        [type, tuple[Attribute, ...]], Iterable[Attribute]
+    ]
+    apply_on_inheritance: bool = True
+    overridable_attributes: bool | tuple[str, ...] = ()
+
+
+def _normalize_overridable_attributes(value):
+    if isinstance(value, bool):
+        return value
+
+    return frozenset(value)
+
+
+def _stage_allows_override(stage, global_overridable, attribute_name):
+    if global_overridable is True:
+        return True
+    if stage.overridable_attributes is True:
+        return True
+
+    return attribute_name in (
+        global_overridable | stage.overridable_attributes
+    )
+
+
+def _stage_nondefault_attributes(attribute, baseline):
+    changed = set()
+
+    for name in _STAGED_FIELD_ATTRIBUTES:
+        if name == "alias":
+            if attribute.alias_is_default:
+                continue
+        elif getattr(attribute, name) != getattr(baseline, name):
+            changed.add(name)
+
+    if not attribute.alias_is_default and attribute.alias != baseline.alias:
+        changed.add("alias")
+
+    return changed
+
+
+class _StagedFieldTransformer:
+    __slots__ = ("global_overridable", "stages")
+
+    def __init__(self, stages, global_overridable):
+        self.stages = stages
+        self.global_overridable = global_overridable
+
+    def __call__(self, cls, attributes):
+        attributes = tuple(attributes)
+        base_attrs = tuple(a for a in attributes if a.inherited)
+        active_attrs = tuple(a for a in attributes if not a.inherited)
+        is_subclass = bool(base_attrs)
+        base_by_id = {a._field_id for a in base_attrs}
+
+        baseline_attribute = Attribute(
+            name="",
+            default=NOTHING,
+            validator=None,
+            repr=True,
+            cmp=None,
+            hash=None,
+            init=True,
+            inherited=False,
+        )
+        owners = {a._field_id: {} for a in active_attrs}
+
+        for stage in self.stages:
+            if is_subclass and not stage.apply_on_inheritance:
+                continue
+
+            result = tuple(
+                stage.transformer(cls, (*base_attrs, *active_attrs))
+            )
+            next_attrs = []
+            output_ids = {a._field_id for a in result}
+            active_by_id = {a._field_id: a for a in active_attrs}
+            seen_output_ids = set()
+
+            for attribute in result:
+                original_id = attribute._field_id
+                if original_id in base_by_id:
+                    continue
+
+                field_id = attribute._field_id
+                previous = active_by_id.get(original_id)
+
+                if original_id in seen_output_ids:
+                    field_id = _next_field_id()
+                    attribute = attribute.evolve()
+                    _OBJ_SETATTR.__get__(attribute)("_field_id", field_id)
+
+                seen_output_ids.add(original_id)
+
+                if previous is None:
+                    owners[field_id] = {
+                        name: stage.name
+                        for name in _stage_nondefault_attributes(
+                            attribute, baseline_attribute
+                        )
+                    }
+                else:
+                    field_owners = owners[previous._field_id]
+                    for name in _STAGED_FIELD_ATTRIBUTES:
+                        if name == "alias":
+                            if attribute.alias_is_default:
+                                continue
+                            old_value = (
+                                previous.alias
+                                if not previous.alias_is_default
+                                else baseline_attribute.alias
+                            )
+                        else:
+                            old_value = getattr(previous, name)
+
+                        if getattr(attribute, name) == old_value:
+                            continue
+
+                        owner = field_owners.get(name)
+                        if (
+                            owner is not None
+                            and owner != stage.name
+                            and not _stage_allows_override(
+                                stage,
+                                self.global_overridable,
+                                name,
+                            )
+                        ):
+                            raise FieldTransformerConflictError(
+                                attribute.name,
+                                name,
+                                owner,
+                                stage.name,
+                            )
+
+                        field_owners[name] = stage.name
+
+                    owners[field_id] = field_owners
+
+                next_attrs.append(attribute)
+
+            active_attrs = tuple(next_attrs)
+            base_attrs = tuple(
+                a for a in base_attrs if a._field_id in output_ids
+            )
+
+        return (*base_attrs, *active_attrs)
+
+
+def combine_field_transformers(
+    *stages: (
+        FieldTransformerStage
+        | Callable[[type, tuple[Attribute, ...]], Iterable[Attribute]]
+    ),
+    overridable_attributes: bool | tuple[str, ...] = (),
+) -> _StagedFieldTransformer:
+    """
+    Combine field transformers into named, ordered stages.
+
+    Plain callables are given their ``__name__`` and are applied when a class
+    inherits from another attrs class.
+
+    .. versionadded:: 26.3.0
+    """
+    normalized = []
+    names = set()
+
+    for stage in stages:
+        if not isinstance(stage, FieldTransformerStage):
+            stage = FieldTransformerStage(
+                getattr(stage, "__name__", repr(stage)),
+                stage,
+            )
+
+        if stage.name in names:
+            msg = f"Duplicate field transformer stage name: {stage.name!r}."
+            raise ValueError(msg)
+        names.add(stage.name)
+
+        normalized.append(
+            stage._replace(
+                overridable_attributes=_normalize_overridable_attributes(
+                    stage.overridable_attributes
+                )
+            )
+        )
+
+    return _StagedFieldTransformer(
+        tuple(normalized),
+        _normalize_overridable_attributes(overridable_attributes),
+    )
 
 
 def _transform_attrs(
@@ -2526,6 +2763,7 @@ class Attribute:
         "on_setattr",
         "alias",
         "alias_is_default",
+        "_field_id",
     )
 
     def __init__(
@@ -2587,6 +2825,7 @@ class Attribute:
             "alias_is_default",
             alias is None if alias_is_default is None else alias_is_default,
         )
+        bound_setattr("_field_id", _next_field_id())
 
     def __setattr__(self, name, value):
         raise FrozenInstanceError
@@ -2674,15 +2913,17 @@ class Attribute:
         Play nice with pickle.
         """
         if len(state) < len(self.__slots__):
-            # Pre-26.1.0 pickle without alias_is_default -- infer it
-            # heuristically.
+            # Older pickles may omit alias_is_default and private
+            # implementation slots. Fill in compatible defaults.
             state_dict = dict(zip(self.__slots__, state, strict=False))
             alias_is_default = state_dict.get(
                 "alias"
             ) is None or state_dict.get("alias") == _default_init_alias_for(
                 state_dict["name"]
             )
-            state = (*state, alias_is_default)
+            state_dict.setdefault("alias_is_default", alias_is_default)
+            state_dict.setdefault("_field_id", _next_field_id())
+            state = tuple(state_dict[name] for name in self.__slots__)
 
         self._setattrs(zip(self.__slots__, state, strict=True))
 
@@ -2717,6 +2958,7 @@ _a = [
         alias=_default_init_alias_for(name),
     )
     for name in Attribute.__slots__
+    if not name.startswith("_")
 ]
 
 Attribute = _add_hash(

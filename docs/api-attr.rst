@@ -98,6 +98,14 @@ Core
 
    Same as `attrs.field`.
 
+.. function:: combine_field_transformers
+
+   Same as `attrs.combine_field_transformers`.
+
+.. class:: FieldTransformerStage
+
+   Same as `attrs.FieldTransformerStage`.
+
 .. class:: Attribute
 
    Same as `attrs.Attribute`.

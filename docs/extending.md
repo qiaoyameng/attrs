@@ -273,6 +273,50 @@ You can use the `attrs.Attribute.alias_is_default` flag to detect whether an ali
 Data(public=42, _private='spam', explicit='yes')
 ```
 
+### Staged Field Transformers
+
+When multiple libraries or helpers transform fields, manually nesting
+their hooks can make a later hook lose changes made by an earlier one.
+`combine_field_transformers()` runs named stages in declaration order
+and reports both stage names if two stages try to set the same field
+attribute:
+
+```{doctest}
+>>> import attrs
+>>>
+>>> def as_integer(cls, fields):
+...     return [field.evolve(type=int, converter=int) for field in fields]
+...
+>>> def require_positive(cls, fields):
+...     return [
+...         field.evolve(
+...             validator=attrs.validators.gt(0)
+...         ) if field.type is int else field
+...         for field in fields
+...     ]
+...
+>>> transformer = attrs.combine_field_transformers(
+...     attrs.FieldTransformerStage("integer", as_integer),
+...     attrs.FieldTransformerStage("positive", require_positive),
+... )
+>>> @attrs.frozen(field_transformer=transformer)
+... class Config:
+...     retries: str
+...
+>>> Config("3")
+Config(retries=3)
+```
+
+A later stage can declare that overriding an attribute is intentional
+using *overridable_attributes*.
+Set `FieldTransformerStage.apply_on_inheritance` to `False` for stages
+that must only act on fields declared by the class to which they are
+attached.
+In subclasses, inheritable stages receive base-class fields for context,
+but only run transformations for fields introduced by that subclass.
+Fields already transformed on a base class are passed through
+unchanged, preventing a converter from being wrapped a second time.
+
 ## Customize Value Serialization in `asdict()`
 
 *attrs* allows you to serialize instances of *attrs* classes to dicts using the {func}`attrs.asdict` function.

@@ -5,8 +5,10 @@ from typing import (
     Any,
     Callable,
     Generic,
+    Iterable,
     Literal,
     Mapping,
+    NamedTuple,
     Protocol,
     Sequence,
     TypeVar,
@@ -66,6 +68,19 @@ _FilterType = Callable[["Attribute[_T]", _T], bool]
 # We subclass this here to keep the protocol's qualified name clean.
 class AttrsInstance(AttrsInstance_, Protocol):
     pass
+
+class FieldTransformerStage(NamedTuple):
+    name: str
+    transformer: Callable[
+        [type, Iterable["Attribute[Any]"]], Iterable["Attribute[Any]"]
+    ]
+    apply_on_inheritance: bool
+    overridable_attributes: bool | frozenset[str]
+
+def combine_field_transformers(
+    *stages: FieldTransformerStage | _FieldTransformer,
+    overridable_attributes: bool | tuple[str, ...] = ...,
+) -> _FieldTransformer: ...
 
 _A = TypeVar("_A", bound=type[AttrsInstance])
 

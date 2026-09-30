@@ -37,6 +37,10 @@ Core
 
 .. autofunction:: field
 
+.. autofunction:: combine_field_transformers
+
+.. autoclass:: FieldTransformerStage
+
 .. autoclass:: Attribute
    :members: evolve
 
@@ -120,6 +124,7 @@ That means that it doesn't matter from from which namespace they've been raised 
 .. autoexception:: AttrsAttributeNotFoundError
 .. autoexception:: NotAnAttrsClassError
 .. autoexception:: DefaultAlreadySetError
+.. autoexception:: FieldTransformerConflictError
 .. autoexception:: NotCallableError
 .. autoexception:: UnannotatedAttributeError
 

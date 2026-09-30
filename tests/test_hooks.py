@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+import inspect
 
 import pytest
 
 import attr
+from attr import NOTHING
 
 
 class TestTransformHook:
@@ -378,6 +380,300 @@ class TestTransformHook:
 
         assert "custom" == f.alias
         assert f.alias_is_default is False
+
+    def test_combined_stages_run_in_declaration_order(self):
+        calls = []
+
+        def stage(name, value):
+            def hook(cls, fields):
+                calls.append(name)
+                return [
+                    a.evolve(**value) if a.name == "x" else a for a in fields
+                ]
+
+            hook.__name__ = name
+            return hook
+
+        transformer = attr.combine_field_transformers(
+            attr.FieldTransformerStage(
+                "type",
+                stage("type", {"type": int}),
+                overridable_attributes=("type",),
+            ),
+            stage(
+                "validator",
+                {"validator": attr.validators.instance_of(int)},
+            ),
+            stage("alias", {"alias": "renamed"}),
+        )
+
+        @attr.s(field_transformer=transformer)
+        class C:
+            x = attr.ib()
+
+        field = attr.fields(C).x
+
+        assert ["type", "validator", "alias"] == calls
+        assert int is field.type
+        assert isinstance(
+            field.validator, attr.validators._InstanceOfValidator
+        )
+        assert "renamed" == field.alias
+        assert ("renamed",) == tuple(inspect.signature(C).parameters)
+        assert C(1) == C(1)
+        with pytest.raises(TypeError):
+            C("not-an-int")
+
+    def test_combined_stage_conflict_reports_field_and_stages(self):
+        def set_type(type):
+            return lambda cls, fields: [
+                a.evolve(type=type) for a in fields
+            ]
+
+        transformer = attr.combine_field_transformers(
+            attr.FieldTransformerStage("first", set_type(int)),
+            attr.FieldTransformerStage("second", set_type(str)),
+        )
+
+        with pytest.raises(
+            attr.exceptions.FieldTransformerConflictError
+        ) as exc_info:
+
+            @attr.s(auto_attribs=True, field_transformer=transformer)
+            class C:
+                x: object
+
+        error = exc_info.value
+
+        assert "x" == error.field_name
+        assert "type" == error.attribute_name
+        assert "first" == error.first_stage
+        assert "second" == error.second
+        assert "x" in str(error)
+        assert "type" in str(error)
+        assert "first" in str(error)
+        assert "second" in str(error)
+
+    def test_combined_stage_can_allow_attribute_override(self):
+        transformer = attr.combine_field_transformers(
+            attr.FieldTransformerStage(
+                "first",
+                lambda cls, fields: [a.evolve(type=int) for a in fields],
+            ),
+            attr.FieldTransformerStage(
+                "second",
+                lambda cls, fields: [a.evolve(type=str) for a in fields],
+                overridable_attributes=("type",),
+            ),
+        )
+
+        @attr.s(auto_attribs=True, field_transformer=transformer)
+        class C:
+            x: object
+
+        assert str is attr.fields(C).x.type
+
+    def test_combined_transformer_can_allow_all_overrides(self):
+        transformer = attr.combine_field_transformers(
+            attr.FieldTransformerStage(
+                "first",
+                lambda cls, fields: [a.evolve(type=int) for a in fields],
+            ),
+            attr.FieldTransformerStage(
+                "second",
+                lambda cls, fields: [a.evolve(type=str) for a in fields],
+            ),
+            overridable_attributes=("type",),
+        )
+
+        @attr.s(auto_attribs=True, field_transformer=transformer)
+        class C:
+            x: object
+
+        assert str is attr.fields(C).x.type
+
+    def test_combined_stage_can_duplicate_an_active_field(self):
+        transformer = attr.combine_field_transformers(
+            attr.FieldTransformerStage(
+                "duplicate",
+                lambda cls, fields: [
+                    *fields,
+                    fields[0].evolve(name="copy"),
+                ],
+            ),
+            attr.FieldTransformerStage(
+                "type-copy",
+                lambda cls, fields: [
+                    a.evolve(type=int) if a.name == "copy" else a
+                    for a in fields
+                ],
+            ),
+        )
+
+        @attr.s(auto_attribs=True, field_transformer=transformer)
+        class C:
+            x: object
+
+        assert "object" == attr.fields(C).x.type
+        assert int is attr.fields(C).copy.type
+
+    def test_combined_stage_inheritance_applies_only_to_new_fields(self):
+        class CountingConverter:
+            def __init__(self, label):
+                self.label = label
+                self.calls = 0
+
+            def __call__(self, value):
+                self.calls += 1
+                return f"{self.label}:{value}"
+
+        base_converter = CountingConverter("base")
+
+        def convert_new_fields(cls, fields):
+            return [
+                (
+                    a.evolve(converter=CountingConverter(a.name))
+                    if not a.inherited and a.converter is None
+                    else a
+                )
+                for a in fields
+            ]
+
+        root_transformer = attr.combine_field_transformers(
+            attr.FieldTransformerStage(
+                "root-converter",
+                lambda cls, fields: [
+                    a.evolve(converter=base_converter) for a in fields
+                ],
+            )
+        )
+        child_transformer = attr.combine_field_transformers(
+            attr.FieldTransformerStage("new-converter", convert_new_fields)
+        )
+
+        @attr.s(collect_by_mro=True, field_transformer=root_transformer)
+        class Base:
+            x = attr.ib()
+
+        @attr.s(collect_by_mro=True, field_transformer=child_transformer)
+        class Sub(Base):
+            y = attr.ib()
+
+        instance = Sub("1", "2")
+
+        assert ["x", "y"] == [a.name for a in attr.fields(Sub)]
+        assert ("x", "y") == tuple(inspect.signature(Sub).parameters)
+        assert "base:1" == instance.x
+        assert "y:2" == instance.y
+        assert 1 == base_converter.calls
+
+    def test_combined_stage_skip_on_inheritance(self):
+        def rename_x(cls, fields):
+            return [
+                a.evolve(alias="renamed") if a.name == "x" else a
+                for a in fields
+            ]
+
+        transformer = attr.combine_field_transformers(
+            attr.FieldTransformerStage(
+                "rename-x", rename_x, apply_on_inheritance=False
+            )
+        )
+
+        @attr.s(collect_by_mro=True, field_transformer=transformer)
+        class Base:
+            x = attr.ib()
+
+        @attr.s(collect_by_mro=True, field_transformer=transformer)
+        class Sub(Base):
+            y = attr.ib()
+
+        assert ("renamed",) == tuple(inspect.signature(Base).parameters)
+        assert ("renamed", "y") == tuple(
+            inspect.signature(Sub).parameters
+        )
+
+    def test_combined_stages_diamond_inheritance_and_field_changes(self):
+        def add_converter(cls, fields):
+            return [
+                (
+                    a.evolve(
+                        converter=(
+                            lambda value, name=a.name: f"{name}:{value}"
+                        )
+                    )
+                    if not a.inherited and a.converter is None
+                    else a
+                )
+                for a in fields
+            ]
+
+        def drop_y(cls, fields):
+            return [a for a in fields if a.name != "y"]
+
+        def add_extra(cls, fields):
+            if any(a.name == "extra" for a in fields):
+                return fields
+            return [
+                *fields,
+                attr.Attribute(
+                    name="extra",
+                    default=NOTHING,
+                    validator=None,
+                    repr=True,
+                    cmp=None,
+                    hash=None,
+                    init=True,
+                    inherited=False,
+                    metadata={},
+                    type=None,
+                    converter=lambda value: f"extra:{value}",
+                    kw_only=False,
+                    eq=True,
+                    eq_key=None,
+                    order=True,
+                    order_key=None,
+                    on_setattr=None,
+                    alias="extra",
+                    alias_is_default=False,
+                ),
+            ]
+
+        transformer = attr.combine_field_transformers(
+            attr.FieldTransformerStage("add-extra", add_extra),
+            attr.FieldTransformerStage("drop-y", drop_y),
+            attr.FieldTransformerStage("convert", add_converter),
+        )
+
+        @attr.s(collect_by_mro=True, field_transformer=transformer)
+        class A:
+            x = attr.ib()
+
+        @attr.s(collect_by_mro=True, field_transformer=transformer)
+        class B(A):
+            y = attr.ib()
+
+        @attr.s(collect_by_mro=True, field_transformer=transformer)
+        class C(A):
+            z = attr.ib()
+
+        @attr.s(collect_by_mro=True, field_transformer=transformer)
+        class D(B, C):
+            d = attr.ib()
+
+        assert ["x", "extra", "z", "d"] == [
+            a.name for a in attr.fields(D)
+        ]
+        assert ("x", "extra", "z", "d") == tuple(
+            inspect.signature(D).parameters
+        )
+
+        instance = D("X", "added-value", "Z", "D")
+
+        assert "x:X" == instance.x
+        assert "extra:added-value" == instance.extra
+        assert "z:Z" == instance.z
+        assert "d:D" == instance.d
 
 
 class TestAsDictHook:

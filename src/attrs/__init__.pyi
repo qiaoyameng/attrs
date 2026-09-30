@@ -3,6 +3,8 @@ import sys
 from typing import (
     Any,
     Callable,
+    Iterable,
+    NamedTuple,
     Mapping,
     Sequence,
     overload,
@@ -65,6 +67,18 @@ _OnSetAttrArgType = _OnSetAttrType | list[_OnSetAttrType] | setters._NoOpType
 _FieldTransformer = Callable[
     [type, list["Attribute[Any]"]], list["Attribute[Any]"]
 ]
+class FieldTransformerStage(NamedTuple):
+    name: str
+    transformer: Callable[
+        [type, Iterable["Attribute[Any]"]], Iterable["Attribute[Any]"]
+    ]
+    apply_on_inheritance: bool
+    overridable_attributes: bool | frozenset[str]
+
+def combine_field_transformers(
+    *stages: FieldTransformerStage | _FieldTransformer,
+    overridable_attributes: bool | tuple[str, ...] = ...,
+) -> _FieldTransformer: ...
 # FIXME: in reality, if multiple validators are passed they must be in a list
 # or tuple, but those are invariant and so would prevent subtypes of
 # _ValidatorType from working when passed in a list or tuple.

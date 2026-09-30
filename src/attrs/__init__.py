@@ -23,6 +23,7 @@ from attr import (
     validate,
 )
 from attr._make import ClassProps
+from attr._make import combine_field_transformers, FieldTransformerStage
 from attr._next_gen import asdict, astuple, inspect
 
 from . import exceptions, filters, setters
@@ -35,6 +36,7 @@ __all__ = [
     "ClassProps",
     "Converter",
     "Factory",
+    "FieldTransformerStage",
     "NothingType",
     "__author__",
     "__copyright__",
@@ -50,6 +52,7 @@ __all__ = [
     "assoc",
     "astuple",
     "cmp_using",
+    "combine_field_transformers",
     "converters",
     "define",
     "evolve",

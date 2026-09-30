@@ -69,6 +69,37 @@ class UnannotatedAttributeError(RuntimeError):
     """
 
 
+class FieldTransformerConflictError(ValueError):
+    """
+    Two field transformer stages changed the same field attribute.
+
+    The later stage may explicitly allow overriding the attributes named in
+    `overridable_attributes`.
+
+    .. versionadded:: 26.3.0
+    """
+
+    def __init__(
+        self,
+        field_name,
+        attribute_name,
+        first_stage,
+        second,
+    ):
+        self.field_name = field_name
+        self.attribute_name = attribute_name
+        self.first_stage = first_stage
+        self.second_stage = second
+        self.second = second
+
+        msg = (
+            f"Field transformer stage {second!r} cannot override "
+            f"attribute {attribute_name!r} of field {field_name!r}: "
+            f"it was already set by stage {first_stage!r}."
+        )
+        super().__init__(msg)
+
+
 class PythonTooOldError(RuntimeError):
     """
     It was attempted to use an *attrs* feature that requires a newer Python

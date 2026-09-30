@@ -11,6 +11,20 @@ class DefaultAlreadySetError(RuntimeError): ...
 class UnannotatedAttributeError(RuntimeError): ...
 class PythonTooOldError(RuntimeError): ...
 
+class FieldTransformerConflictError(ValueError):
+    field_name: str
+    attribute_name: str
+    first_stage: str
+    second_stage: str
+    def __init__(
+        self,
+        field_name: str,
+        attribute_name: str,
+        first_stage: str,
+        second: str,
+    ) -> None: ...
+    second: str
+
 class NotCallableError(TypeError):
     msg: str = ...
     value: Any = ...
