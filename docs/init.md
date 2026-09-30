@@ -162,6 +162,37 @@ Therefore you should use `self` as little as possible.
 Even the smartest of us can [get confused](https://github.com/python-attrs/attrs/issues/289) by what happens if you pass partially initialized objects around.
 :::
 
+(field-dependencies)=
+
+### Field Dependencies
+
+If a factory (or a converter) needs to read other fields while the instance is being initialized, you can declare those fields using *depends_on* instead of relying on the declaration order.
+*attrs* then initializes the declared dependencies first, no matter where the fields are declared -- while the order of the `__init__` parameters stays unchanged:
+
+```{doctest}
+>>> @define
+... class C:
+...     derived: int = field(
+...         default=Factory(
+...             lambda self: self.base * 2,
+...             takes_self=True,
+...             depends_on=["base"],
+...         )
+...     )
+...     base: int = 21
+>>> C()
+C(derived=42, base=21)
+>>> C(base=10)
+C(derived=20, base=10)
+```
+
+Explicitly passed values still go through converters as usual, and validators run after all fields are initialized, so they always see the complete instance.
+
+Dependencies may also point to inherited or `init=False` fields.
+If a dependency names an unknown field, or the dependencies form a cycle, an error is raised when the class is created, containing the offending field chain.
+
+Classes that don't declare any dependencies are initialized exactly as before.
+
 (validators)=
 
 ## Validators

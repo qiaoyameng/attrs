@@ -2184,6 +2184,82 @@ def _determine_setters(
     return (), _assign, _assign_with_converter
 
 
+def _field_dependencies(a: Attribute) -> tuple[str, ...]:
+    """
+    Return the names of fields that *a*'s default factory and converter
+    declare to depend on.
+    """
+    deps = []
+    if isinstance(a.default, Factory):
+        deps.extend(a.default.depends_on)
+    if isinstance(a.converter, Converter):
+        deps.extend(a.converter.depends_on)
+
+    return tuple(deps)
+
+
+def _resolve_init_order(attrs: list[Attribute]) -> list[Attribute]:
+    """
+    Return *attrs* in an initialization order that satisfies the field
+    dependencies declared via `Factory(depends_on=...)` and
+    `Converter(depends_on=...)`.
+
+    If no field declares any dependencies, *attrs* is returned unchanged.
+
+    Raises:
+        ValueError: If a dependency refers to an unknown field, or if the
+            dependencies form a cycle. The error message contains the
+            offending field chain.
+    """
+    deps_by_name = {}
+    for a in attrs:
+        deps = _field_dependencies(a)
+        if deps:
+            deps_by_name[a.name] = deps
+
+    if not deps_by_name:
+        return attrs
+
+    by_name = {a.name: a for a in attrs}
+
+    for name, deps in deps_by_name.items():
+        for dep in deps:
+            if dep not in by_name:
+                msg = (
+                    f"Field '{name}' depends on unknown field '{dep}' "
+                    f"(dependency chain: {name} -> {dep})."
+                )
+                raise ValueError(msg)
+
+    # Stable depth-first topological sort: fields keep declaration order
+    # unless a dependency forces a field to be initialized earlier.
+    order = []
+    state = {}  # name -> "visiting" | "done"
+
+    def visit(name, chain):
+        status = state.get(name)
+        if status == "done":
+            return
+        if status == "visiting":
+            cycle = " -> ".join((*chain, name))
+            msg = (
+                "Circular dependency between fields detected "
+                f"(dependency chain: {cycle})."
+            )
+            raise ValueError(msg)
+
+        state[name] = "visiting"
+        for dep in deps_by_name.get(name, ()):
+            visit(dep, (*chain, name))
+        state[name] = "done"
+        order.append(by_name[name])
+
+    for a in attrs:
+        visit(a.name, ())
+
+    return order
+
+
 def _attrs_to_init_script(
     attrs: list[Attribute],
     is_frozen: bool,
@@ -2229,7 +2305,15 @@ def _attrs_to_init_script(
     names_for_globals = {}
     annotations = {"return": None}
 
+    # Determine the order in which fields are initialized. Fields without
+    # declared dependencies keep declaration order; _resolve_init_order
+    # returns *attrs* unchanged in that case.
+    eval_order = _resolve_init_order(attrs)
+    attr_lines = {}
+
     for a in attrs:
+        chunk = attr_lines[a.name] = []
+
         if a.validator:
             attrs_to_validate.append(a)
 
@@ -2253,7 +2337,7 @@ def _attrs_to_init_script(
             if has_factory:
                 init_factory_name = _INIT_FACTORY_PAT % (a.name,)
                 if converter is not None:
-                    lines.append(
+                    chunk.append(
                         fmt_setter_with_converter(
                             attr_name,
                             init_factory_name + f"({maybe_self})",
@@ -2265,7 +2349,7 @@ def _attrs_to_init_script(
                         converter.converter
                     )
                 else:
-                    lines.append(
+                    chunk.append(
                         fmt_setter(
                             attr_name,
                             init_factory_name + f"({maybe_self})",
@@ -2274,7 +2358,7 @@ def _attrs_to_init_script(
                     )
                 names_for_globals[init_factory_name] = a.default.factory
             elif converter is not None:
-                lines.append(
+                chunk.append(
                     fmt_setter_with_converter(
                         attr_name,
                         f"attr_dict['{attr_name}'].default",
@@ -2286,7 +2370,7 @@ def _attrs_to_init_script(
                     converter.converter
                 )
             else:
-                lines.append(
+                chunk.append(
                     fmt_setter(
                         attr_name,
                         f"attr_dict['{attr_name}'].default",
@@ -2302,7 +2386,7 @@ def _attrs_to_init_script(
                 pre_init_args.append(arg_name)
 
             if converter is not None:
-                lines.append(
+                chunk.append(
                     fmt_setter_with_converter(
                         attr_name, arg_name, has_on_setattr, converter
                     )
@@ -2311,7 +2395,7 @@ def _attrs_to_init_script(
                     converter.converter
                 )
             else:
-                lines.append(fmt_setter(attr_name, arg_name, has_on_setattr))
+                chunk.append(fmt_setter(attr_name, arg_name, has_on_setattr))
 
         elif has_factory:
             arg = f"{arg_name}=NOTHING"
@@ -2320,18 +2404,18 @@ def _attrs_to_init_script(
             else:
                 args.append(arg)
                 pre_init_args.append(arg_name)
-            lines.append(f"if {arg_name} is not NOTHING:")
+            chunk.append(f"if {arg_name} is not NOTHING:")
 
             init_factory_name = _INIT_FACTORY_PAT % (a.name,)
             if converter is not None:
-                lines.append(
+                chunk.append(
                     "    "
                     + fmt_setter_with_converter(
                         attr_name, arg_name, has_on_setattr, converter
                     )
                 )
-                lines.append("else:")
-                lines.append(
+                chunk.append("else:")
+                chunk.append(
                     "    "
                     + fmt_setter_with_converter(
                         attr_name,
@@ -2344,11 +2428,11 @@ def _attrs_to_init_script(
                     converter.converter
                 )
             else:
-                lines.append(
+                chunk.append(
                     "    " + fmt_setter(attr_name, arg_name, has_on_setattr)
                 )
-                lines.append("else:")
-                lines.append(
+                chunk.append("else:")
+                chunk.append(
                     "    "
                     + fmt_setter(
                         attr_name,
@@ -2365,7 +2449,7 @@ def _attrs_to_init_script(
                 pre_init_args.append(arg_name)
 
             if converter is not None:
-                lines.append(
+                chunk.append(
                     fmt_setter_with_converter(
                         attr_name, arg_name, has_on_setattr, converter
                     )
@@ -2374,7 +2458,7 @@ def _attrs_to_init_script(
                     converter.converter
                 )
             else:
-                lines.append(fmt_setter(attr_name, arg_name, has_on_setattr))
+                chunk.append(fmt_setter(attr_name, arg_name, has_on_setattr))
 
         if a.init is True:
             if a.type is not None and converter is None:
@@ -2382,6 +2466,11 @@ def _attrs_to_init_script(
             elif converter is not None and converter._first_param_type:
                 # Use the type from the converter if present.
                 annotations[arg_name] = converter._first_param_type
+
+    # Emit the per-field assignments in dependency order. The __init__
+    # signature (args above) stays in declaration order.
+    for a in eval_order:
+        lines.extend(attr_lines[a.name])
 
     if attrs_to_validate:  # we can skip this if there are no validators.
         names_for_globals["_config"] = _config
@@ -3097,14 +3186,24 @@ class Factory:
             Pass the partially initialized instance that is being initialized
             as a positional argument.
 
+        depends_on (str | typing.Iterable[str]):
+            Names of other fields that this factory reads (usually via
+            *takes_self*). The generated ``__init__`` initializes those
+            fields before calling this factory, regardless of declaration
+            order. The order of the ``__init__`` parameters is unaffected.
+
     .. versionadded:: 17.1.0  *takes_self*
+    .. versionadded:: 26.2.0  *depends_on*
     """
 
-    __slots__ = ("factory", "takes_self")
+    __slots__ = ("factory", "takes_self", "depends_on")
 
-    def __init__(self, factory, takes_self=False):
+    def __init__(self, factory, takes_self=False, depends_on=()):
         self.factory = factory
         self.takes_self = takes_self
+        if isinstance(depends_on, str):
+            depends_on = (depends_on,)
+        self.depends_on = tuple(depends_on)
 
     def __getstate__(self):
         """
@@ -3157,7 +3256,15 @@ class Converter:
             Pass the field definition (an :class:`Attribute`) into the
             converter as a positional argument. (default: `False`)
 
+        depends_on (str | typing.Iterable[str]):
+            Names of other fields that this converter reads (usually via
+            *takes_self*). The generated ``__init__`` initializes those
+            fields before running this converter, regardless of declaration
+            order. The order of the ``__init__`` parameters is unaffected.
+            (default: `()`)
+
     .. versionadded:: 24.1.0
+    .. versionadded:: 26.2.0  *depends_on*
     """
 
     __slots__ = (
@@ -3165,14 +3272,20 @@ class Converter:
         "_first_param_type",
         "_global_name",
         "converter",
+        "depends_on",
         "takes_field",
         "takes_self",
     )
 
-    def __init__(self, converter, *, takes_self=False, takes_field=False):
+    def __init__(
+        self, converter, *, takes_self=False, takes_field=False, depends_on=()
+    ):
         self.converter = converter
         self.takes_self = takes_self
         self.takes_field = takes_field
+        if isinstance(depends_on, str):
+            depends_on = (depends_on,)
+        self.depends_on = tuple(depends_on)
 
         ex = _AnnotationExtractor(converter)
         self._first_param_type = ex.get_first_param_type()
@@ -3228,6 +3341,7 @@ class Converter:
             "converter": self.converter,
             "takes_self": self.takes_self,
             "takes_field": self.takes_field,
+            "depends_on": self.depends_on,
         }
 
     def __setstate__(self, state):
@@ -3250,7 +3364,7 @@ _f = [
         init=True,
         inherited=False,
     )
-    for name in ("converter", "takes_self", "takes_field")
+    for name in ("converter", "takes_self", "takes_field", "depends_on")
 ]
 
 Converter = _add_hash(
