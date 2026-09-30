@@ -60,6 +60,18 @@ Because according to the [definition](https://docs.python.org/3/glossary.html#te
    This point is the reason why mutable structures like lists, dictionaries, or sets aren't hashable while immutable ones like tuples or `frozenset`s are:
    point 1 and 2 require that the hash changes with the contents but point 3 forbids it.
 
+`cycle_safe_eq=True` only prevents recursive equality comparisons.
+It does not create a cycle-aware hash function and does not make a class
+hashable by itself.
+Hashability still requires both of these conditions:
+
+- The class has a `__hash__` method, for example through identity equality,
+  `frozen=True`, or an explicitly chosen `unsafe_hash=True`.
+- Every field included in the generated hash has a stable, finite hash.
+  A self-referential field included in the hash still raises
+  `RecursionError`; such a field must be excluded from hashing or replaced by
+  custom safe hashing semantics.
+
 For a more thorough explanation of this topic, please refer to this blog post: [*Python Hashes and Equality*](https://hynek.me/articles/hashes-and-equality/).
 
 :::{note}

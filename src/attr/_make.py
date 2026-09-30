@@ -1147,10 +1147,10 @@ class _ClassBuilder:
 
         return self
 
-    def add_eq(self):
+    def add_eq(self, cycle_safe=False):
         cd = self._cls_dict
 
-        script, globs = _make_eq_script(self._attrs)
+        script, globs = _make_eq_script(self._attrs, cycle_safe)
 
         def _attach_eq(cls_dict, globs):
             cls_dict["__eq__"] = self._add_method_dunders(globs["__eq__"])
@@ -1376,6 +1376,7 @@ def attrs(
     match_args=True,
     unsafe_hash=None,
     force_kw_only=True,
+    cycle_safe_eq=False,
 ):
     r"""
     A class decorator that adds :term:`dunder methods` according to the
@@ -1455,6 +1456,7 @@ def attrs(
        *kw_only* now only applies to attributes defined in the current class,
        and respects attribute-level ``kw_only=False`` settings.
     .. versionadded:: 25.4.0 *force_kw_only*
+    .. versionadded:: 26.2.0 *cycle_safe_eq*
     """
     if repr_ns is not None:
         import warnings
@@ -1559,6 +1561,7 @@ def attrs(
             ),
             on_setattr_hook=on_setattr,
             field_transformer=field_transformer,
+            cycle_safe_eq=cycle_safe_eq,
         )
 
         if not props.is_hashable and cache_hash:
@@ -1580,7 +1583,7 @@ def attrs(
             builder.add_str()
 
         if props.added_eq:
-            builder.add_eq()
+            builder.add_eq(props.cycle_safe_eq)
         if props.added_ordering:
             builder.add_order()
 
@@ -1739,7 +1742,7 @@ def __ne__(self, other):
     return not result
 
 
-def _make_eq_script(attrs: list) -> tuple[str, dict]:
+def _make_eq_script(attrs: list, cycle_safe: bool = False) -> tuple[str, dict]:
     """
     Create __eq__ method for *cls* with *attrs*.
     """
@@ -1752,7 +1755,35 @@ def _make_eq_script(attrs: list) -> tuple[str, dict]:
     ]
 
     globs = {}
-    if attrs:
+    if cycle_safe:
+        globs["_cycle_safe_eq_context"] = _compat.cycle_safe_eq_context
+        lines.extend(
+            [
+                "    with _cycle_safe_eq_context(self, other) as cycle_state:",
+                "        if cycle_state <= 0:",
+                "            return cycle_state == 0",
+            ]
+        )
+
+        if attrs:
+            lines.append("        return (")
+            for a in attrs:
+                if a.eq_key:
+                    cmp_name = f"_{a.name}_key"
+                    globs[cmp_name] = a.eq_key
+                    comparison = (
+                        f"{cmp_name}(self.{a.name}) == "
+                        f"{cmp_name}(other.{a.name})"
+                    )
+                else:
+                    comparison = f"self.{a.name} == other.{a.name}"
+                lines.append(f"            {comparison}")
+                if a is not attrs[-1]:
+                    lines[-1] = f"{lines[-1]} and"
+            lines.append("        )")
+        else:
+            lines.append("        return True")
+    elif attrs:
         lines.append("    return  (")
         for a in attrs:
             if a.eq_key:
@@ -1761,7 +1792,8 @@ def _make_eq_script(attrs: list) -> tuple[str, dict]:
                 # of the evaluated function.
                 globs[cmp_name] = a.eq_key
                 lines.append(
-                    f"        {cmp_name}(self.{a.name}) == {cmp_name}(other.{a.name})"
+                    f"        {cmp_name}(self.{a.name}) == "
+                    f"{cmp_name}(other.{a.name})"
                 )
             else:
                 lines.append(f"        self.{a.name} == other.{a.name}")
@@ -1832,14 +1864,14 @@ def _make_order(cls, attrs):
     return __lt__, __le__, __gt__, __ge__
 
 
-def _add_eq(cls, attrs=None):
+def _add_eq(cls, attrs=None, cycle_safe=False):
     """
     Add equality methods to *cls* with *attrs*.
     """
     if attrs is None:
         attrs = cls.__attrs_attrs__
 
-    script, globs = _make_eq_script(attrs)
+    script, globs = _make_eq_script(attrs, cycle_safe)
     _compile_and_eval(
         script, globs, filename=_generate_unique_filename(cls, "__eq__")
     )
@@ -2965,6 +2997,9 @@ class ClassProps:
         field_transformer (Callable[[Attribute[Any]], Attribute[Any]] | None):
             The class's `field transformers <transform-fields>`.
 
+        cycle_safe_eq (bool):
+            Whether generated equality methods support cyclic references.
+
     .. versionadded:: 25.4.0
     """
 
@@ -3015,6 +3050,7 @@ class ClassProps:
         "added_pickling",
         "on_setattr_hook",
         "field_transformer",
+        "cycle_safe_eq",
     )
 
     def __init__(
@@ -3035,6 +3071,7 @@ class ClassProps:
         added_pickling,
         on_setattr_hook,
         field_transformer,
+        cycle_safe_eq=False,
     ):
         self.is_exception = is_exception
         self.is_slotted = is_slotted
@@ -3052,6 +3089,7 @@ class ClassProps:
         self.added_pickling = added_pickling
         self.on_setattr_hook = on_setattr_hook
         self.field_transformer = field_transformer
+        self.cycle_safe_eq = cycle_safe_eq
 
     @property
     def is_hashable(self):

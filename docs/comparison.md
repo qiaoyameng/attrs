@@ -69,3 +69,44 @@ class C:
 Please note that *eq* and *order* are set *independently*, because *order* is `False` by default in {func}`~attrs.define` (but not in {func}`attr.s`).
 You can set both at once by using the *cmp* argument that we've undeprecated just for this use-case.
 :::
+
+(cycle-safe-equality)=
+
+## Cyclic Structures
+
+Regular value equality recursively evaluates fields, so a self-referential
+structure causes a `RecursionError`.
+Pass `cycle_safe_eq=True` to generate equality methods that track active
+object pairs in thread-local state:
+
+```{doctest}
+>>> from attrs import define, field
+>>> @define(cycle_safe_eq=True)
+... class Node:
+...     value: int
+...     next: "Node | None" = None
+
+>>> node = Node(1)
+>>> node.next = node
+>>> other = Node(1)
+>>> other.next = other
+>>> node == other
+True
+```
+
+Tracking is based on the exact pair of objects.
+Therefore a self-loop is not considered equal to a two-node loop, even when
+both loops contain the same values.
+The temporary mappings are removed when comparison finishes, whether it
+returns normally or raises, and comparisons running in different threads do
+not share state.
+
+Field exclusions, equality keys, custom comparators, and the requirement
+that both objects have exactly the same class remain in effect.
+
+:::{warning}
+This option changes only equality.
+It does not make cyclic values hashable.
+See {doc}`hashing` for the separate rules that determine whether *attrs*
+generates `__hash__`.
+:::

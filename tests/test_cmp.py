@@ -4,10 +4,16 @@
 Tests for methods from `attrib._cmp`.
 """
 
+import threading
+
 import pytest
 
-from attr._cmp import cmp_using
+import attr
+import attrs
+
 from attr._compat import PY_3_13_PLUS
+from attr._compat import eq_cycle_context
+from attr._cmp import cmp_using
 
 
 # Test parameters.
@@ -365,6 +371,283 @@ class TestNotImplementedIsPropagated:
 
         assert C(2) == C(2)
         assert C(1) != C(1)
+
+
+class TestCycleSafeEq:
+    def test_self_loop(self):
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int
+            link: object = None
+
+        left = Node(1)
+        left.link = left
+        right = Node(1)
+        right.link = right
+
+        assert left == right
+        assert not hasattr(eq_cycle_context, "left_to_right")
+
+    def test_two_node_loop(self):
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int
+            previous: object = None
+            next: object = None
+
+        def make_loop(first, second):
+            left = Node(first)
+            right = Node(second)
+            left.previous = left.next = right
+            right.previous = right.next = left
+            return left
+
+        assert make_loop(1, 2) == make_loop(1, 2)
+        assert not hasattr(eq_cycle_context, "left_to_right")
+
+    def test_classic_api_supports_cycle_safe_eq(self):
+        @attr.s(auto_attribs=True, cycle_safe_eq=True)
+        class Node:
+            value: int
+            link: object = None
+
+        left = Node(1)
+        left.link = left
+        right = Node(1)
+        right.link = right
+
+        assert left == right
+
+    def test_self_loop_is_not_two_node_loop(self):
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int
+            previous: object = None
+            next: object = None
+
+        single = Node(1)
+        single.previous = single.next = single
+
+        first = Node(1)
+        second = Node(2)
+        first.previous = first.next = second
+        second.previous = second.next = first
+
+        assert single != first
+        assert first != single
+
+    def test_unequal_value_in_loop(self):
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int
+            link: object = None
+
+        left = Node(1)
+        left.link = left
+        right = Node(2)
+        right.link = right
+
+        assert left != right
+
+    def test_shared_child_node_compares_by_value(self):
+        @attrs.define(cycle_safe_eq=True)
+        class Child:
+            value: int
+
+        @attrs.define(cycle_safe_eq=True)
+        class Parent:
+            value: int
+            left: Child
+            right: Child
+
+        shared = Child(1)
+        left = Parent(0, shared, shared)
+
+        right = Parent(0, Child(1), Child(1))
+
+        assert left == right
+
+    def test_eq_false_field_is_ignored(self):
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int
+            link: object
+            ignored: int = attrs.field(default=0, eq=False)
+
+        left = Node(1, None)
+        right = Node(1, None, 2)
+
+        assert left == right
+
+    def test_eq_key_is_used_for_cycle(self):
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: str = attrs.field(eq=str.lower)
+            link: object = None
+
+        left = Node("A")
+        left.link = left
+        right = Node("a")
+        right.link = right
+
+        assert left == right
+
+    def test_different_type_returns_notimplemented(self):
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int
+
+        class Other:
+            pass
+
+        assert Node(1).__eq__(Other()) is NotImplemented
+        assert not hasattr(eq_cycle_context, "left_to_right")
+
+    def test_field_comparator_notimplemented_is_used(self):
+        comparator = cmp_using(
+            eq=lambda a, b: NotImplemented if a == 1 else a == b,
+            require_same_type=False,
+        )
+
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int = attrs.field(eq=comparator)
+
+        assert Node(1) != Node(1)
+        assert Node(2) == Node(2)
+
+    def test_exception_clears_state(self):
+        def compare(left, right):
+            raise ValueError
+
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int
+            link: object = None
+            checked: object = attrs.field(default=None, eq=cmp_using(compare))
+
+        left = Node(1)
+        left.link = left
+        right = Node(1)
+        right.link = right
+
+        with pytest.raises(ValueError):
+            left == right
+
+        assert not hasattr(eq_cycle_context, "left_to_right")
+        clean = attrs.make_class(
+            "CleanNode",
+            {"value": attr.ib(), "link": attr.ib(default=None)},
+            cycle_safe_eq=True,
+        )
+        clean_left = clean(1)
+        clean_left.link = clean_left
+        clean_right = clean(1)
+        clean_right.link = clean_right
+
+        assert clean_left == clean_right
+
+    def test_threads_have_independent_state(self):
+        entered = threading.Event()
+        release = threading.Event()
+        errors = []
+
+        def block_compare(left, right):
+            entered.set()
+            release.wait(5)
+            return left == right
+
+        @attrs.define(cycle_safe_eq=True)
+        class BlockingNode:
+            value: int
+            link: object = None
+            checked: object = attrs.field(
+                default=None, eq=cmp_using(block_compare)
+            )
+
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int
+            link: object = None
+
+        def blocked_comparison():
+            left = BlockingNode(1)
+            left.link = left
+            right = BlockingNode(1)
+            right.link = right
+
+            try:
+                assert left == right
+            except BaseException as error:  # pragma: no cover
+                errors.append(error)
+
+        def independent_comparison():
+            entered.wait(5)
+
+            left = Node(2)
+            left.link = left
+            right = Node(2)
+            right.link = right
+
+            try:
+                assert left == right
+                assert not hasattr(eq_cycle_context, "left_to_right")
+            except BaseException as error:  # pragma: no cover
+                errors.append(error)
+            finally:
+                release.set()
+
+        first_thread = threading.Thread(target=blocked_comparison)
+        second_thread = threading.Thread(target=independent_comparison)
+
+        first_thread.start()
+        second_thread.start()
+        second_thread.join(5)
+        first_thread.join(5)
+
+        assert not first_thread.is_alive()
+        assert not second_thread.is_alive()
+        assert errors == []
+
+    def test_mutable_class_remains_unhashable(self):
+        @attrs.define(cycle_safe_eq=True)
+        class Node:
+            value: int
+            link: object = None
+
+        node = Node(1)
+        node.link = node
+
+        with pytest.raises(TypeError):
+            hash(node)
+
+    def test_frozen_cyclic_hash_is_not_supported_by_eq_mode(self):
+        @attrs.frozen(cycle_safe_eq=True)
+        class Node:
+            value: int
+            link: object = None
+
+        node = Node(1)
+        object.__setattr__(node, "link", node)
+
+        with pytest.raises(RecursionError):
+            hash(node)
+
+        assert hash(Node(1, None)) == hash(Node(1, None))
+
+    def test_cyclic_hash_requires_non_cyclic_hash_fields(self):
+        @attrs.define(unsafe_hash=True, cycle_safe_eq=True)
+        class Node:
+            value: int
+            link: object = attrs.field(default=None, hash=False)
+
+        left = Node(1)
+        left.link = left
+        right = Node(1)
+        right.link = right
+
+        assert left == right
+        assert hash(left) == hash(right)
 
 
 class TestDundersPartialOrdering:

@@ -572,6 +572,7 @@ class TestAttributes:
             auto_attribs=True,
             cache_hash=True,
             str=True,
+            cycle_safe_eq=True,
         )
         class C:
             x: int = attr.ib()
@@ -593,6 +594,7 @@ class TestAttributes:
             added_pickling=True,
             on_setattr_hook=None,
             field_transformer=None,
+            cycle_safe_eq=True,
         ) == attrs.inspect(C)
 
     def test_sets_attrs_props_defaults(self):
@@ -622,6 +624,7 @@ class TestAttributes:
             added_pickling=False,
             on_setattr_hook=None,
             field_transformer=None,
+            cycle_safe_eq=False,
         ) == attrs.inspect(CDef)
 
     def test_empty(self):

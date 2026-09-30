@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 
+import contextlib
 import sys
 import threading
 
@@ -93,6 +94,58 @@ class _AnnotationExtractor:
 # don't have a direct reference to the thread-local in their globals dict.
 # If they have such a reference, it breaks cloudpickle.
 repr_context = threading.local()
+
+# Thread-local mappings for active cycle-safe equality comparisons. Mapping
+# both directions prevents one object from being matched to two counterparts
+# while a recursive comparison is on the stack.
+eq_cycle_context = threading.local()
+
+
+@contextlib.contextmanager
+def cycle_safe_eq_context(left, right):
+    """
+    Track an active equality comparison pair.
+
+    Yield -1 if either object is actively matched to a different counterpart,
+    0 if this exact pair is encountered on a cycle edge, and 1 for a new pair.
+    """
+    left_id = id(left)
+    right_id = id(right)
+
+    try:
+        left_to_right = eq_cycle_context.left_to_right
+        right_to_left = eq_cycle_context.right_to_left
+        created_context = False
+    except AttributeError:
+        left_to_right = {}
+        right_to_left = {}
+        eq_cycle_context.left_to_right = left_to_right
+        eq_cycle_context.right_to_left = right_to_left
+        created_context = True
+
+    added_pair = False
+    try:
+        existing_right = left_to_right.get(left_id)
+        if existing_right == right_id:
+            yield 0
+            return
+
+        if existing_right is not None or right_id in right_to_left:
+            yield -1
+            return
+
+        left_to_right[left_id] = right_id
+        right_to_left[right_id] = left_id
+        added_pair = True
+        yield 1
+    finally:
+        if added_pair:
+            del left_to_right[left_id]
+            del right_to_left[right_id]
+
+        if created_context:
+            del eq_cycle_context.left_to_right
+            del eq_cycle_context.right_to_left
 
 
 def get_generic_base(cl):

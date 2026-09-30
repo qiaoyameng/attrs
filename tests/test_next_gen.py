@@ -473,6 +473,7 @@ class TestProps:
             kw_only=True,
             cache_hash=True,
             str=True,
+            cycle_safe_eq=True,
         )
         class C:
             x: int
@@ -495,6 +496,7 @@ class TestProps:
                 added_pickling=False,  # because slots=False
                 on_setattr_hook=None,
                 field_transformer=None,
+                cycle_safe_eq=True,
             )
             == C.__attrs_props__
         )
@@ -526,6 +528,7 @@ class TestProps:
                 added_pickling=True,
                 on_setattr_hook=None,
                 field_transformer=None,
+                cycle_safe_eq=False,
             )
             == C.__attrs_props__
         )

@@ -44,6 +44,7 @@ def define(
     field_transformer=None,
     match_args=True,
     force_kw_only=False,
+    cycle_safe_eq=False,
 ):
     r"""
     A class decorator that adds :term:`dunder methods` according to
@@ -155,6 +156,14 @@ def define(
             If `None` mirror value of *eq*.
 
             .. seealso:: `comparison`
+
+        cycle_safe_eq (bool):
+            If True, generated equality methods support self-referential
+            structures by tracking active object pairs in thread-local state.
+            The feature is opt-in and does not change hashing behavior.
+
+            .. seealso::
+                `comparison` describes cyclic equality and its limitations.
 
         unsafe_hash (bool | None):
             If None (default), the ``__hash__`` method is generated according
@@ -335,6 +344,7 @@ def define(
     .. versionchanged:: 26.2.0
        *on_setattr* hooks can now be generator functions that yield exactly
        once.
+    .. versionadded:: 26.2.0 *cycle_safe_eq*
 
     .. note::
 
@@ -384,6 +394,7 @@ def define(
             field_transformer=field_transformer,
             match_args=match_args,
             force_kw_only=force_kw_only,
+            cycle_safe_eq=cycle_safe_eq,
         )
 
     def wrap(cls):
