@@ -2081,6 +2081,7 @@ def _make_init_script(
         needs_cached_setattr,
         has_cls_on_setattr,
         "__attrs_init__" if attrs_init else "__init__",
+        all_attr_names={a.name for a in attrs},
     )
     if cls.__module__ in sys.modules:
         # This makes typing.get_type_hints(CLS.__init__) resolve string types.
@@ -2184,6 +2185,100 @@ def _determine_setters(
     return (), _assign, _assign_with_converter
 
 
+def _attribute_dependencies(a: Attribute) -> tuple[str, ...]:
+    """
+    Return the names of fields that *a*'s default factory and/or converter
+    declare as dependencies.
+    """
+    deps = []
+    if isinstance(a.default, Factory):
+        deps.extend(a.default.depends_on)
+    if isinstance(a.converter, Converter):
+        deps.extend(a.converter.depends_on)
+    return tuple(deps)
+
+
+def _resolve_init_order(
+    attrs: list[Attribute], all_attr_names: set[str] | None
+) -> list[Attribute] | None:
+    """
+    Return *attrs* in the order in which they must be initialized so that
+    every field is initialized after the fields its default factory and/or
+    converter depend on.
+
+    Return None if no field declares dependencies, in which case the caller
+    keeps the declaration order.
+    """
+    deps = {}
+    for a in attrs:
+        a_deps = _attribute_dependencies(a)
+        if a_deps:
+            deps[a.name] = a_deps
+
+    if not deps:
+        return None
+
+    by_name = {a.name: a for a in attrs}
+    if all_attr_names is None:
+        all_attr_names = set(by_name)
+
+    # Validate the graph first so problems are reported with the chain of
+    # fields that leads to them.
+    state = {}
+
+    def check(name, chain):
+        node_state = state.get(name)
+        if node_state == "done":
+            return
+        if node_state == "visiting":
+            cycle = " -> ".join([*chain[chain.index(name) :], name])
+            msg = f"Circular dependency between fields: {cycle}."
+            raise ValueError(msg)
+        if name not in by_name:
+            path = " -> ".join([*chain, name])
+            if name in all_attr_names:
+                msg = (
+                    f"Field '{chain[-1]}' depends on field '{name}', which "
+                    "is not initialized by __init__ (init=False without a "
+                    f"default): {path}."
+                )
+            else:
+                msg = (
+                    f"Field '{chain[-1]}' depends on unknown field "
+                    f"'{name}': {path}."
+                )
+            raise ValueError(msg)
+        state[name] = "visiting"
+        chain = (*chain, name)
+        for dep in deps.get(name, ()):
+            check(dep, chain)
+        state[name] = "done"
+
+    for a in attrs:
+        check(a.name, ())
+
+    # Kahn's algorithm, keeping the declaration order whenever the
+    # dependencies allow it.
+    indegree = {a.name: 0 for a in attrs}
+    dependents = {a.name: [] for a in attrs}
+    for name, name_deps in deps.items():
+        for dep in dict.fromkeys(name_deps):
+            indegree[name] += 1
+            dependents[dep].append(name)
+
+    ready = [a.name for a in attrs if indegree[a.name] == 0]
+    order = []
+    while ready:
+        name = ready.pop(0)
+        order.append(by_name[name])
+        for dependent in dependents[name]:
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                ready.append(dependent)
+
+    return order
+
+
 def _attrs_to_init_script(
     attrs: list[Attribute],
     is_frozen: bool,
@@ -2197,6 +2292,7 @@ def _attrs_to_init_script(
     needs_cached_setattr: bool,
     has_cls_on_setattr: bool,
     method_name: str,
+    all_attr_names: set[str] | None = None,
 ) -> tuple[str, dict, dict]:
     """
     Return a script of an initializer for *attrs*, a dict of globals, and
@@ -2233,6 +2329,44 @@ def _attrs_to_init_script(
         if a.validator:
             attrs_to_validate.append(a)
 
+        if a.init is False:
+            continue
+
+        attr_name = a.name
+        # a.alias is set to maybe-mangled attr_name in _ClassBuilder if not
+        # explicitly provided
+        arg_name = a.alias
+
+        has_factory = isinstance(a.default, Factory)
+
+        if a.converter is not None and not isinstance(a.converter, Converter):
+            converter = Converter(a.converter)
+        else:
+            converter = a.converter
+
+        if a.default is not NOTHING and not has_factory:
+            arg = f"{arg_name}=attr_dict['{attr_name}'].default"
+        elif has_factory:
+            arg = f"{arg_name}=NOTHING"
+        else:
+            arg = arg_name
+
+        if a.kw_only:
+            kw_only_args.append(arg)
+        else:
+            args.append(arg)
+            pre_init_args.append(arg_name)
+
+        if a.type is not None and converter is None:
+            annotations[arg_name] = a.type
+        elif converter is not None and converter._first_param_type:
+            # Use the type from the converter if present.
+            annotations[arg_name] = converter._first_param_type
+
+    def emit_attr_init(a):
+        """
+        Append the lines initializing *a* to *lines*.
+        """
         attr_name = a.name
         has_on_setattr = a.on_setattr is not None or (
             a.on_setattr is not setters.NO_OP and has_cls_on_setattr
@@ -2294,13 +2428,6 @@ def _attrs_to_init_script(
                     )
                 )
         elif a.default is not NOTHING and not has_factory:
-            arg = f"{arg_name}=attr_dict['{attr_name}'].default"
-            if a.kw_only:
-                kw_only_args.append(arg)
-            else:
-                args.append(arg)
-                pre_init_args.append(arg_name)
-
             if converter is not None:
                 lines.append(
                     fmt_setter_with_converter(
@@ -2314,12 +2441,6 @@ def _attrs_to_init_script(
                 lines.append(fmt_setter(attr_name, arg_name, has_on_setattr))
 
         elif has_factory:
-            arg = f"{arg_name}=NOTHING"
-            if a.kw_only:
-                kw_only_args.append(arg)
-            else:
-                args.append(arg)
-                pre_init_args.append(arg_name)
             lines.append(f"if {arg_name} is not NOTHING:")
 
             init_factory_name = _INIT_FACTORY_PAT % (a.name,)
@@ -2358,12 +2479,6 @@ def _attrs_to_init_script(
                 )
             names_for_globals[init_factory_name] = a.default.factory
         else:
-            if a.kw_only:
-                kw_only_args.append(arg_name)
-            else:
-                args.append(arg_name)
-                pre_init_args.append(arg_name)
-
             if converter is not None:
                 lines.append(
                     fmt_setter_with_converter(
@@ -2376,12 +2491,12 @@ def _attrs_to_init_script(
             else:
                 lines.append(fmt_setter(attr_name, arg_name, has_on_setattr))
 
-        if a.init is True:
-            if a.type is not None and converter is None:
-                annotations[arg_name] = a.type
-            elif converter is not None and converter._first_param_type:
-                # Use the type from the converter if present.
-                annotations[arg_name] = converter._first_param_type
+    # Fields whose factories/converters declare dependencies are initialized
+    # in dependency order; the parameter order above is unaffected. Classes
+    # without dependency declarations keep the declaration order.
+    eval_order = _resolve_init_order(attrs, all_attr_names)
+    for a in attrs if eval_order is None else eval_order:
+        emit_attr_init(a)
 
     if attrs_to_validate:  # we can skip this if there are no validators.
         names_for_globals["_config"] = _config
@@ -3097,14 +3212,24 @@ class Factory:
             Pass the partially initialized instance that is being initialized
             as a positional argument.
 
+        depends_on (tuple[str, ...]):
+            Names of other fields that this factory depends on. Fields named
+            here are guaranteed to be initialized before this factory is
+            called, regardless of their declaration order. The ``__init__``
+            parameter order is unaffected.
+
     .. versionadded:: 17.1.0  *takes_self*
+    .. versionadded:: 26.2.0  *depends_on*
     """
 
-    __slots__ = ("factory", "takes_self")
+    # depends_on must stay last for pickle backwards-compatibility of
+    # __getstate__/__setstate__ tuples.
+    __slots__ = ("factory", "takes_self", "depends_on")
 
-    def __init__(self, factory, takes_self=False):
+    def __init__(self, factory, takes_self=False, depends_on=()):
         self.factory = factory
         self.takes_self = takes_self
+        self.depends_on = tuple(depends_on)
 
     def __getstate__(self):
         """
@@ -3116,6 +3241,9 @@ class Factory:
         """
         Play nice with pickle.
         """
+        if len(state) == 2:
+            # State pickled before depends_on existed.
+            state = (*state, ())
         for name, value in zip(self.__slots__, state, strict=True):
             setattr(self, name, value)
 
@@ -3157,7 +3285,14 @@ class Converter:
             Pass the field definition (an :class:`Attribute`) into the
             converter as a positional argument. (default: `False`)
 
+        depends_on (tuple[str, ...]):
+            Names of other fields that this converter depends on. Fields
+            named here are guaranteed to be initialized before this converter
+            runs, regardless of their declaration order. The ``__init__``
+            parameter order is unaffected. (default: `()`)
+
     .. versionadded:: 24.1.0
+    .. versionadded:: 26.2.0  *depends_on*
     """
 
     __slots__ = (
@@ -3165,14 +3300,18 @@ class Converter:
         "_first_param_type",
         "_global_name",
         "converter",
+        "depends_on",
         "takes_field",
         "takes_self",
     )
 
-    def __init__(self, converter, *, takes_self=False, takes_field=False):
+    def __init__(
+        self, converter, *, takes_self=False, takes_field=False, depends_on=()
+    ):
         self.converter = converter
         self.takes_self = takes_self
         self.takes_field = takes_field
+        self.depends_on = tuple(depends_on)
 
         ex = _AnnotationExtractor(converter)
         self._first_param_type = ex.get_first_param_type()
@@ -3228,6 +3367,7 @@ class Converter:
             "converter": self.converter,
             "takes_self": self.takes_self,
             "takes_field": self.takes_field,
+            "depends_on": self.depends_on,
         }
 
     def __setstate__(self, state):
@@ -3250,7 +3390,7 @@ _f = [
         init=True,
         inherited=False,
     )
-    for name in ("converter", "takes_self", "takes_field")
+    for name in ("converter", "takes_self", "takes_field", "depends_on")
 ]
 
 Converter = _add_hash(

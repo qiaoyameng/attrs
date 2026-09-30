@@ -162,6 +162,26 @@ Therefore you should use `self` as little as possible.
 Even the smartest of us can [get confused](https://github.com/python-attrs/attrs/issues/289) by what happens if you pass partially initialized objects around.
 :::
 
+If a factory or converter needs other fields to be initialized first, you can declare those dependencies using *depends_on* instead of reordering your fields (which would change the `__init__` signature).
+*attrs* then initializes the fields in dependency order while the parameter order stays as declared:
+
+```{doctest}
+>>> @define
+... class C:
+...     doubled: int = field(
+...         default=Factory(lambda self: self.base * 2, takes_self=True, depends_on=("base",))
+...     )
+...     base: int = 21
+>>> C()
+C(doubled=42, base=21)
+>>> inspect.signature(C.__init__)
+<Signature (self, doubled: int = NOTHING, base: int = 21) -> None>
+```
+
+{class}`attrs.Converter` accepts the same *depends_on* argument for converters that need other fields to be set first.
+Dependencies may also point at inherited fields or `init=False` fields with defaults.
+Depending on a field that doesn't exist -- or dependency cycles -- raise an error naming the field chain when the class is created.
+
 (validators)=
 
 ## Validators

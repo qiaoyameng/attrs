@@ -80,16 +80,20 @@ NothingType: TypeAlias = Literal[_Nothing.NOTHING]
 # Work around mypy issue #4554 in the common case by using an overload.
 
 @overload
-def Factory(factory: Callable[[], _T]) -> _T: ...
+def Factory(
+    factory: Callable[[], _T], *, depends_on: tuple[str, ...] = ...
+) -> _T: ...
 @overload
 def Factory(
     factory: Callable[[Any], _T],
     takes_self: Literal[True],
+    depends_on: tuple[str, ...] = ...,
 ) -> _T: ...
 @overload
 def Factory(
     factory: Callable[[], _T],
     takes_self: Literal[False],
+    depends_on: tuple[str, ...] = ...,
 ) -> _T: ...
 
 In = TypeVar("In")
@@ -97,7 +101,12 @@ Out = TypeVar("Out")
 
 class Converter(Generic[In, Out]):
     @overload
-    def __init__(self, converter: Callable[[In], Out]) -> None: ...
+    def __init__(
+        self,
+        converter: Callable[[In], Out],
+        *,
+        depends_on: tuple[str, ...] = ...,
+    ) -> None: ...
     @overload
     def __init__(
         self,
@@ -105,6 +114,7 @@ class Converter(Generic[In, Out]):
         *,
         takes_self: Literal[True],
         takes_field: Literal[True],
+        depends_on: tuple[str, ...] = ...,
     ) -> None: ...
     @overload
     def __init__(
@@ -112,6 +122,7 @@ class Converter(Generic[In, Out]):
         converter: Callable[[In, Attribute], Out],
         *,
         takes_field: Literal[True],
+        depends_on: tuple[str, ...] = ...,
     ) -> None: ...
     @overload
     def __init__(
@@ -119,6 +130,7 @@ class Converter(Generic[In, Out]):
         converter: Callable[[In, AttrsInstance], Out],
         *,
         takes_self: Literal[True],
+        depends_on: tuple[str, ...] = ...,
     ) -> None: ...
 
 class Attribute(Generic[_T]):
