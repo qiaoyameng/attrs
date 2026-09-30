@@ -428,6 +428,36 @@ class TestNextGen:
 
         assert d.x == d.xx()
 
+    def test_positional_only_field(self):
+        """
+        attrs.field(positional_only=True) produces a real '/' signature,
+        rejects keyword arguments, and still works with evolve.
+        """
+        import inspect
+
+        @attrs.define
+        class C:
+            x: int = attrs.field(positional_only=True)
+            y: int = 0
+
+        sig = inspect.signature(C)
+
+        assert (
+            sig.parameters["x"].kind
+            is inspect.Parameter.POSITIONAL_ONLY
+        )
+        assert (
+            sig.parameters["y"].kind
+            is inspect.Parameter.POSITIONAL_OR_KEYWORD
+        )
+
+        assert C(1, 2).x == 1
+
+        with pytest.raises(TypeError, match="positional-only"):
+            C(x=1)
+
+        assert attrs.evolve(C(1), x=2).x == 2
+
 
 class TestAsTuple:
     def test_smoke(self):

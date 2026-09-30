@@ -288,7 +288,7 @@ class TestTransformAttrs:
                 "eq=True, eq_key=None, order=True, order_key=None, "
                 "hash=None, init=True, "
                 "metadata=mappingproxy({}), type=None, converter=None, "
-                "kw_only=False, inherited=False, on_setattr=None, alias='y')"
+                "kw_only=False, inherited=False, on_setattr=None, alias='y', positional_only=False)"
             ),
         ) == e.value.args
 
@@ -1380,6 +1380,396 @@ class TestKeywordOnlyAttributes:
         assert fs["c"].kw_only is False
         assert fs["c_t"].kw_only is True
         assert fs["c_f"].kw_only is False
+
+
+class TestPositionalOnlyAttributes:
+    """
+    Tests for positional-only attributes.
+    """
+
+    def test_adds_positional_only_arguments(self):
+        """
+        Positional-only fields appear before '/' and work positionally.
+        """
+
+        @attr.s
+        class C:
+            a = attr.ib(positional_only=True)
+            b = attr.ib(positional_only=True, default=2)
+
+        c = C(1)
+
+        assert c.a == 1
+        assert c.b == 2
+
+    def test_positional_only_rejects_keyword(self):
+        """
+        Python itself rejects keyword arguments for positional-only fields.
+        """
+
+        @attr.s
+        class C:
+            x = attr.ib(positional_only=True)
+
+        with pytest.raises(TypeError, match="positional-only"):
+            C(x=1)
+
+    def test_real_slash_in_signature(self):
+        """
+        The generated __init__ has a real '/' marker and
+        inspect.signature reports POSITIONAL_ONLY parameters.
+        """
+
+        @attr.s(auto_attribs=True)
+        class C:
+            x: int = attr.ib(positional_only=True)
+            y: int = 0
+            z: int = attr.ib(default=0, kw_only=True)
+
+        params = inspect.signature(C.__init__).parameters
+        assert params["x"].kind is inspect.Parameter.POSITIONAL_ONLY
+        assert params["y"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+        assert params["z"].kind is inspect.Parameter.KEYWORD_ONLY
+
+    def test_mixed_kinds(self):
+        """
+        Positional-only, regular, and kw_only fields can be mixed.
+        """
+
+        @attr.s(auto_attribs=True)
+        class C:
+            a: int = attr.ib(positional_only=True)
+            b: int = 0
+            c: int = attr.ib(default=0, kw_only=True)
+
+        c = C(1, 2, c=3)
+
+        assert (c.a, c.b, c.c) == (1, 2, 3)
+
+    def test_ignores_positional_only_when_init_is_false(self):
+        """
+        ``init=False`` fields do not participate in the signature at all.
+        """
+
+        @attr.s
+        class C:
+            x = attr.ib(init=False, default=42, positional_only=True)
+            y = attr.ib()
+
+        assert "x" not in inspect.signature(C.__init__).parameters
+        assert C(1).x == 42
+
+    def test_cannot_be_both_kw_only_and_positional_only(self):
+        """
+        A field cannot explicitly be both keyword- and positional-only.
+        """
+
+        with pytest.raises(ValueError, match="both keyword-only and positional-only"):
+
+            @attr.s(auto_attribs=True)
+            class C:
+                x: int = attr.ib(kw_only=True, positional_only=True)
+
+    def test_class_kw_only_conflicts_with_explicit_positional_only(self):
+        """
+        Under the default (non-forced) class-level kw_only, an explicit
+        positional_only field is a conflict.
+        """
+
+        with pytest.raises(ValueError, match="both keyword-only and positional-only"):
+
+            @attr.define(kw_only=True)
+            class C:
+                x: int = attr.field(positional_only=True)
+
+    def test_force_kw_only_overrides_positional_only(self):
+        """
+        force_kw_only=True turns every field keyword-only, including ones
+        explicitly marked positional_only.
+        """
+
+        @attr.s(kw_only=True, force_kw_only=True, auto_attribs=True)
+        class C:
+            x: int = attr.ib(positional_only=True)
+
+        params = inspect.signature(C.__init__).parameters
+        assert params["x"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert fields_dict(C)["x"].positional_only is False
+
+        assert C(x=1).x == 1
+
+    def test_positional_only_must_be_prefix(self):
+        """
+        A positional-only field cannot follow a regular positional field.
+        """
+
+        with pytest.raises(ValueError, match="before regular positional"):
+
+            @attr.s
+            class C:
+                x = attr.ib()
+                y = attr.ib(positional_only=True)
+
+    def test_positional_only_must_be_prefix_with_inheritance(self):
+        """
+        A positional-only field in a subclass cannot follow a regular
+        positional field inherited from a base class.
+        """
+
+        @attr.s(auto_attribs=True)
+        class Base:
+            x: int
+
+        with pytest.raises(ValueError, match="before regular positional"):
+
+            @attr.s(auto_attribs=True)
+            class C(Base):
+                y: int = attr.ib(positional_only=True)
+
+    def test_mandatory_after_defaulted_positional_only(self):
+        """
+        Even across the '/' boundary, a mandatory parameter cannot follow a
+        defaulted one (Python rejects this in the generated signature), so the
+        error is raised at class creation time.
+        """
+
+        with pytest.raises(
+            ValueError,
+            match="No mandatory attributes allowed after an attribute with a default",
+        ):
+
+            @attr.s
+            class C:
+                x = attr.ib(default=0, positional_only=True)
+                y = attr.ib()
+
+    def test_default_order_within_positional_only_section(self):
+        """
+        Mandatory positional-only fields cannot follow defaulted ones.
+        """
+
+        with pytest.raises(
+            ValueError,
+            match="No mandatory attributes allowed after an attribute with a default",
+        ):
+
+            @attr.s
+            class C:
+                x = attr.ib(default=1, positional_only=True)
+                y = attr.ib(positional_only=True)
+
+    def test_mandatory_positional_only_before_defaulted_regular(self):
+        """
+        A mandatory positional-only field can be followed by a defaulted
+        regular field.
+        """
+
+        @attr.s(auto_attribs=True)
+        class C:
+            x: int = attr.ib(positional_only=True)
+            y: int = 0
+
+        assert C(1).y == 0
+
+    def test_positional_only_inheritance_defaults(self):
+        """
+        Positional-only fields can be added across a hierarchy and defaults
+        must remain ordered.
+        """
+
+        @attr.s(auto_attribs=True)
+        class Base:
+            a: int = attr.ib(default=1, positional_only=True)
+
+        @attr.s(auto_attribs=True)
+        class Sub(Base):
+            b: int = attr.ib(default=2, positional_only=True)
+
+        assert Sub().a == 1
+        assert Sub(10, 20).b == 20
+
+        with pytest.raises(
+            ValueError,
+            match="No mandatory attributes allowed after an attribute with a default",
+        ):
+
+            @attr.s(auto_attribs=True)
+            class Bad(Base):
+                b: int = attr.ib(positional_only=True)
+
+    def test_inherited_positional_only_stays_positional_only(self):
+        """
+        A positional-only base field stays positional-only in the subclass.
+        """
+
+        @attr.s(auto_attribs=True)
+        class Base:
+            a: int = attr.ib(positional_only=True)
+
+        @attr.s(auto_attribs=True)
+        class Sub(Base):
+            b: int = 0
+
+        params = inspect.signature(Sub.__init__).parameters
+        assert params["a"].kind is inspect.Parameter.POSITIONAL_ONLY
+        assert params["b"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+
+        with pytest.raises(TypeError, match="positional-only"):
+            Sub(a=1)
+
+    def test_factory_positional_only(self):
+        """
+        Factory defaults work for positional-only fields.
+        """
+
+        @attr.s
+        class C:
+            items = attr.ib(factory=list, positional_only=True)
+
+        assert C().items == []
+        assert C([1]).items == [1]
+
+    def test_alias_positional_only(self):
+        """
+        Explicit aliases are used as the positional-only parameter name and
+        remain unavailable as keywords.
+        """
+
+        @attr.s(auto_attribs=True)
+        class C:
+            _v: int = attr.ib(positional_only=True, alias="value")
+
+        params = inspect.signature(C.__init__).parameters
+        assert params["value"].kind is inspect.Parameter.POSITIONAL_ONLY
+        assert C(5)._v == 5
+
+        with pytest.raises(TypeError, match="positional-only"):
+            C(value=5)
+
+    def test_converter_annotation(self):
+        """
+        The __init__ annotation for a positional-only field still reflects the
+        converter's first parameter type.
+        """
+
+        def converter(value: str) -> int:
+            return int(value)
+
+        @attr.s(auto_attribs=True)
+        class C:
+            x: int = attr.ib(positional_only=True, converter=converter)
+
+        assert C.__init__.__annotations__["x"] is str
+        assert C("42").x == 42
+
+    def test_match_args_includes_positional_only(self):
+        """
+        __match_args__ contains positional-only and regular (but not
+        kw_only) fields in order.
+        """
+
+        @attr.s(auto_attribs=True)
+        class C:
+            a: int = attr.ib(positional_only=True)
+            b: int = 0
+            c: int = attr.ib(default=0, kw_only=True)
+
+        assert C.__match_args__ == ("a", "b")
+
+        match C(1, 2):
+            case C(pa, pb):
+                matched = (pa, pb)
+        assert matched == (1, 2)
+
+    def test_evolve_positional_only_by_field_name(self):
+        """
+        evolve accepts changes under the field *name/alias* even though the
+        constructor is invoked positionally.
+        """
+
+        @attr.s(auto_attribs=True)
+        class C:
+            a: int = attr.ib(positional_only=True)
+            b: int = 0
+            c: int = attr.ib(default=0, kw_only=True)
+
+        c = C(1, 2, c=3)
+
+        assert attr.evolve(c, a=10) == C(10, 2, c=3)
+        assert attr.evolve(c, b=20) == C(1, 20, c=3)
+        assert attr.evolve(c, c=30) == C(1, 2, c=30)
+        assert attr.evolve(c, a=10, b=20, c=30) == C(10, 20, c=30)
+
+    def test_evolve_positional_only_with_alias(self):
+        """
+        evolve uses the alias to address a positional-only field.
+        """
+
+        @attr.s(auto_attribs=True)
+        class C:
+            _a: int = attr.ib(positional_only=True, alias="a")
+
+        assert attr.evolve(C(1), a=2)._a == 2
+
+    @pytest.mark.skipif(
+        sys.version_info < (3, 13), reason="__replace__ is generated on 3.13+"
+    )
+    def test_replace_dunder_positional_only(self):
+        """
+        The generated __replace__ (and copy.replace) works for
+        positional-only fields.
+        """
+        import copy
+
+        @attr.s(auto_attribs=True)
+        class C:
+            a: int = attr.ib(positional_only=True)
+            b: int = 0
+
+        c = C(1, 2)
+
+        assert c.__replace__(a=10) == C(10, 2)
+        assert copy.replace(c, a=10, b=20) == C(10, 20)
+
+    def test_attrs_init_has_slash(self):
+        """
+        __attrs_init__ (generated when init=False) also uses a real '/'.
+        """
+
+        @attr.s(init=False, auto_attribs=True)
+        class C:
+            x: int = attr.ib(positional_only=True)
+
+        params = inspect.signature(C.__attrs_init__).parameters
+        assert params["x"].kind is inspect.Parameter.POSITIONAL_ONLY
+
+    def test_make_class_positional_only(self):
+        """
+        positional_only works through the functional API.
+        """
+
+        C = attr.make_class(
+            "C",
+            {"x": attr.ib(positional_only=True), "y": attr.ib(default=0)},
+        )
+
+        assert C(1).x == 1
+        with pytest.raises(TypeError, match="positional-only"):
+            C(x=1)
+
+    def test_field_flag_metadata(self):
+        """
+        The resolved flag is exposed on the Attribute.
+        """
+
+        @attr.s(auto_attribs=True)
+        class C:
+            a: int = attr.ib(positional_only=True)
+            b: int = 0
+
+        fs = fields_dict(C)
+        assert fs["a"].positional_only is True
+        assert fs["b"].positional_only is False
 
 
 @attr.s

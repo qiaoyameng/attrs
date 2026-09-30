@@ -113,6 +113,7 @@ def attrib(
     converter=None,
     factory=None,
     kw_only=None,
+    positional_only=None,
     eq=None,
     order=None,
     on_setattr=None,
@@ -145,6 +146,7 @@ def attrib(
     .. versionadded:: 18.1.0
        ``factory=f`` is syntactic sugar for ``default=attr.Factory(f)``.
     .. versionadded:: 18.2.0 *kw_only*
+    .. versionadded:: 26.2.0 *positional_only*
     .. versionchanged:: 19.2.0 *convert* keyword argument removed.
     .. versionchanged:: 19.2.0 *repr* also accepts a custom callable.
     .. deprecated:: 19.2.0 *cmp* Removal on or after 2021-06-01.
@@ -205,6 +207,7 @@ def attrib(
         metadata=metadata,
         type=type,
         kw_only=kw_only,
+        positional_only=positional_only,
         eq=eq,
         eq_key=eq_key,
         order=order,
@@ -445,10 +448,20 @@ def _transform_attrs(
             attr_name,
             ca,
             kw_only is not no,
+            False,
             anns.get(attr_name),
         )
         for attr_name, ca in ca_list
     ]
+
+    # An attribute cannot explicitly be both keyword-only and positional-only.
+    # This checks what the user actually declared (None means "inherit the
+    # class default"), so it must run *before* class-level kw_only settings
+    # (YES/FORCE) resolve the effective value.
+    for _attr_name, ca in ca_list:
+        if ca.init is not False and ca.kw_only is True and ca.positional_only:
+            msg = f"Attributes cannot be both keyword-only and positional-only.  Attribute in question: {_attr_name!r}"
+            raise ValueError(msg)
 
     if collect_by_mro:
         base_attrs, base_attr_map = _collect_base_attrs(
@@ -460,8 +473,14 @@ def _transform_attrs(
         )
 
     if kw_only is ClassProps.KeywordOnly.FORCE:
-        own_attrs = [a.evolve(kw_only=True) for a in own_attrs]
-        base_attrs = [a.evolve(kw_only=True) for a in base_attrs]
+        # FORCE makes *every* attribute keyword-only, even if one explicitly
+        # opted into positional-only or keyword-only=False.
+        own_attrs = [
+            a.evolve(kw_only=True, positional_only=False) for a in own_attrs
+        ]
+        base_attrs = [
+            a.evolve(kw_only=True, positional_only=False) for a in base_attrs
+        ]
 
     attrs = base_attrs + own_attrs
 
@@ -477,13 +496,35 @@ def _transform_attrs(
     if field_transformer is not None:
         attrs = tuple(field_transformer(cls, attrs))
 
-    # Check attr order after executing the field_transformer.
-    # Mandatory vs non-mandatory attr order only matters when they are part of
-    # the __init__ signature and when they aren't kw_only (which are moved to
-    # the end and can be mandatory or non-mandatory in any order, as they will
-    # be specified as keyword args anyway). Check the order of those attrs:
+    # Validate the attributes that end up in the __init__ signature, after
+    # executing the field_transformer.
+    init_attrs = [a for a in attrs if a.init is not False]
+
+    for a in init_attrs:
+        if a.kw_only and a.positional_only:
+            msg = f"Attributes cannot be both keyword-only and positional-only.  Attribute in question: {a!r}"
+            raise ValueError(msg)
+
+    # Positional-only parameters must come first and form one contiguous
+    # prefix; a positional-only field cannot follow a regular positional field
+    # (e.g. one inherited from a base class).
+    seen_regular_positional = False
+    for a in (a for a in init_attrs if not a.kw_only):
+        if a.positional_only:
+            if seen_regular_positional:
+                msg = f"Positional-only attributes must come before regular positional attributes.  Attribute in question: {a!r}"
+                raise ValueError(msg)
+        else:
+            seen_regular_positional = True
+
+    # Mandatory vs non-mandatory attr order matters for all positional
+    # parameters: although positional-only and regular positional parameters
+    # are separated by '/', Python does not allow a defaulted positional-only
+    # parameter followed by a mandatory one after '/'. kw_only attrs are moved
+    # to the end after '*' and can be mandatory or non-mandatory in any order,
+    # as they are specified as keyword args anyway.
     had_default = False
-    for a in (a for a in attrs if a.init is not False and a.kw_only is False):
+    for a in (a for a in init_attrs if not a.kw_only):
         if had_default is True and a.default is NOTHING:
             msg = f"No mandatory attributes allowed after an attribute with a default value or factory.  Attribute in question: {a!r}"
             raise ValueError(msg)
@@ -633,15 +674,24 @@ def evolve(*args, **changes):
 
     cls = inst.__class__
     attrs = fields(cls)
+    # Positional-only __init__ parameters cannot be passed by keyword, so they
+    # are collected in signature order and passed positionally to the
+    # constructor.
+    positional_only_values = []
     for a in attrs:
         if not a.init:
             continue
         attr_name = a.name  # To deal with private attributes.
         init_name = a.alias
+        if a.positional_only:
+            positional_only_values.append(
+                changes.pop(init_name, getattr(inst, attr_name))
+            )
+            continue
         if init_name not in changes:
             changes[init_name] = getattr(inst, attr_name)
 
-    return cls(**changes)
+    return cls(*positional_only_values, **changes)
 
 
 class _ClassBuilder:
@@ -2219,7 +2269,8 @@ def _attrs_to_init_script(
     )
     lines.extend(extra_lines)
 
-    args = []  # Parameters in the definition of __init__
+    args = []  # Regular positional parameters in the definition of __init__
+    positional_only_args = []  # Positional-only parameters of __init__
     pre_init_args = []  # Parameters in the call to __attrs_pre_init__
     kw_only_args = []  # Used for both 'args' and 'pre_init_args' above
     attrs_to_validate = []
@@ -2297,6 +2348,9 @@ def _attrs_to_init_script(
             arg = f"{arg_name}=attr_dict['{attr_name}'].default"
             if a.kw_only:
                 kw_only_args.append(arg)
+            elif a.positional_only:
+                positional_only_args.append(arg)
+                pre_init_args.append(arg_name)
             else:
                 args.append(arg)
                 pre_init_args.append(arg_name)
@@ -2317,6 +2371,9 @@ def _attrs_to_init_script(
             arg = f"{arg_name}=NOTHING"
             if a.kw_only:
                 kw_only_args.append(arg)
+            elif a.positional_only:
+                positional_only_args.append(arg)
+                pre_init_args.append(arg_name)
             else:
                 args.append(arg)
                 pre_init_args.append(arg_name)
@@ -2360,6 +2417,9 @@ def _attrs_to_init_script(
         else:
             if a.kw_only:
                 kw_only_args.append(arg_name)
+            elif a.positional_only:
+                positional_only_args.append(arg_name)
+                pre_init_args.append(arg_name)
             else:
                 args.append(arg_name)
                 pre_init_args.append(arg_name)
@@ -2418,7 +2478,15 @@ def _attrs_to_init_script(
 
         lines.append(f"BaseException.__init__(self, {vals})")
 
-    args = ", ".join(args)
+    # Assemble the parameter list of __init__: positional-only parameters,
+    # separated by '/', then regular positional parameters and finally the
+    # keyword-only parameters after '*'.
+    param_sections = []
+    if positional_only_args:
+        param_sections.append(", ".join(positional_only_args) + ", /")
+    if args:
+        param_sections.append(", ".join(args))
+    args = ", ".join(param_sections)
     pre_init_args = ", ".join(pre_init_args)
     if kw_only_args:
         # leading comma & kw_only args
@@ -2501,6 +2569,7 @@ class Attribute:
     .. versionadded:: 21.1.0 *eq_key* and *order_key*
     .. versionadded:: 22.2.0 *alias*
     .. versionadded:: 26.1.0 *alias_is_default*
+    .. versionadded:: 26.2.0 *positional_only*
 
     For the full version history of the fields, see `attr.ib`.
     """
@@ -2526,6 +2595,7 @@ class Attribute:
         "on_setattr",
         "alias",
         "alias_is_default",
+        "positional_only",
     )
 
     def __init__(
@@ -2549,6 +2619,7 @@ class Attribute:
         on_setattr=None,
         alias=None,
         alias_is_default=None,
+        positional_only=False,
     ):
         eq, eq_key, order, order_key = _determine_attrib_eq_order(
             cmp, eq_key or eq, order_key or order, True
@@ -2587,16 +2658,23 @@ class Attribute:
             "alias_is_default",
             alias is None if alias_is_default is None else alias_is_default,
         )
+        bound_setattr("positional_only", positional_only)
 
     def __setattr__(self, name, value):
         raise FrozenInstanceError
 
     @classmethod
     def from_counting_attr(
-        cls, name: str, ca: _CountingAttr, kw_only: bool, type=None
+        cls,
+        name: str,
+        ca: _CountingAttr,
+        kw_only: bool,
+        positional_only: bool = False,
+        type=None,
     ):
         # The 'kw_only' argument is the class-level setting, and is used if the
-        # attribute itself does not explicitly set 'kw_only'.
+        # attribute itself does not explicitly set 'kw_only'. The same applies
+        # to 'positional_only'.
         # type holds the annotated value. deal with conflicts:
         if type is None:
             type = ca.type
@@ -2623,6 +2701,9 @@ class Attribute:
             ca.on_setattr,
             ca.alias,
             ca.alias is None,
+            positional_only=False
+            if ca.positional_only is None
+            else ca.positional_only,
         )
 
     # Don't use attrs.evolve since fields(Attribute) doesn't work
@@ -2674,15 +2755,24 @@ class Attribute:
         Play nice with pickle.
         """
         if len(state) < len(self.__slots__):
-            # Pre-26.1.0 pickle without alias_is_default -- infer it
-            # heuristically.
-            state_dict = dict(zip(self.__slots__, state, strict=False))
-            alias_is_default = state_dict.get(
-                "alias"
-            ) is None or state_dict.get("alias") == _default_init_alias_for(
-                state_dict["name"]
-            )
-            state = (*state, alias_is_default)
+            # Older pickles lack slots appended in later versions
+            # (alias_is_default in 26.1.0, positional_only in 26.2.0). Fill in
+            # the missing trailing slots.
+            state = list(state)
+            for slot in self.__slots__[len(state) :]:
+                if slot == "alias_is_default":
+                    # Infer it heuristically from the (possibly also missing)
+                    # alias.
+                    state_dict = dict(zip(self.__slots__, state, strict=False))
+                    alias = state_dict.get("alias")
+                    state.append(
+                        alias is None
+                        or alias
+                        == _default_init_alias_for(state_dict["name"])
+                    )
+                else:
+                    state.append(False)
+            state = tuple(state)
 
         self._setattrs(zip(self.__slots__, state, strict=True))
 
@@ -2748,6 +2838,7 @@ class _CountingAttr:
         "hash",
         "init",
         "kw_only",
+        "positional_only",
         "metadata",
         "on_setattr",
         "order",
@@ -2818,6 +2909,7 @@ class _CountingAttr:
         metadata,
         type,
         kw_only,
+        positional_only,
         eq,
         eq_key,
         order,
@@ -2840,6 +2932,7 @@ class _CountingAttr:
         self.metadata = metadata
         self.type = type
         self.kw_only = kw_only
+        self.positional_only = positional_only
         self.on_setattr = on_setattr
         self.alias = alias
 

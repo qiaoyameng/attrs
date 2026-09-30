@@ -443,6 +443,7 @@ def field(
     converter=None,
     factory=None,
     kw_only=None,
+    positional_only=None,
     eq=None,
     order=None,
     on_setattr=None,
@@ -573,6 +574,16 @@ def field(
             *init* is False, this parameter is ignored).  If None (default),
             mirror the setting from `attrs.define`.
 
+        positional_only (bool | None):
+            Make this attribute positional-only in the generated ``__init__``
+            (if *init* is False, this parameter is ignored): it will appear
+            before the ``/`` separator and can only be passed positionally.
+            Positional-only attributes must be declared before all regular
+            positional attributes (including inherited ones). If None
+            (default), the attribute is a regular positional parameter.
+
+            .. seealso:: `positional-only`
+
         on_setattr (~typing.Callable | list[~typing.Callable] | None | ~typing.Literal[attrs.setters.NO_OP]):
             Allows to overwrite the *on_setattr* setting from `attr.s`. If left
             None, the *on_setattr* value from `attrs.define` is used. Set to
@@ -598,6 +609,7 @@ def field(
     .. versionchanged:: 25.4.0
        *kw_only* can now be None, and its default is also changed from False to
        None.
+    .. versionadded:: 26.2.0 *positional_only*
     .. versionchanged:: 26.2.0
        *on_setattr* hooks can now be generator functions that yield exactly
        once.
@@ -617,6 +629,7 @@ def field(
         converter=converter,
         factory=factory,
         kw_only=kw_only,
+        positional_only=positional_only,
         eq=eq,
         order=order,
         on_setattr=on_setattr,

@@ -162,6 +162,49 @@ Therefore you should use `self` as little as possible.
 Even the smartest of us can [get confused](https://github.com/python-attrs/attrs/issues/289) by what happens if you pass partially initialized objects around.
 :::
 
+(positional-only)=
+
+## Positional-Only Attributes
+
+Sometimes you want to prevent callers from passing a field by keyword -- for
+example, because a field name is an implementation detail that you may rename
+later without breaking callers.
+Passing `positional_only=True` puts the field before the real `/` separator
+in the generated `__init__`, so it can only be passed positionally:
+
+```{doctest}
+>>> import inspect
+>>> @define
+... class C:
+...     x: int = field(positional_only=True)
+...     y: int = 0
+...     z: int = field(default=0, kw_only=True)
+>>> inspect.signature(C)
+<Signature (self, x: int, /, y: int = 0, *, z: int = 0) -> None)>
+>>> C(1, 2, z=3)
+C(x=1, y=2, z=3)
+```
+
+Passing a positional-only field by keyword is rejected by Python itself:
+
+```{doctest}
+>>> C(x=1)
+Traceback (most recent call last):
+...
+TypeError: C.__init__() got some positional-only arguments passed as keyword arguments: 'x'
+```
+
+Positional-only fields must come before all regular positional fields --
+including ones inherited from base classes -- and the usual rule that a
+mandatory field must not follow a field with a default applies across the
+`/` boundary as well.
+Invalid combinations raise a `ValueError` while the class is being created.
+
+`attrs.evolve` / `__replace__` are not affected: they keep accepting changes
+by field name and take care of invoking the constructor positionally.
+Positional-only fields are also included in `__match_args__` and visible as
+`inspect.Parameter.POSITIONAL_ONLY` in `inspect.signature`.
+
 (validators)=
 
 ## Validators
