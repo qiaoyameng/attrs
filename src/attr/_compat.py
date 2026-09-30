@@ -95,6 +95,21 @@ class _AnnotationExtractor:
 repr_context = threading.local()
 
 
+# Thread-local global to track (id(self), id(other)) pairs that are
+# currently being compared by cycle-safe __eq__ methods (see the
+# cycle_safe_eq argument to attrs()/define()).
+#
+# Keying on the *pair* of identities is important: re-encountering the same
+# pair means the comparison is cyclic and can be cut short, while the same
+# left-hand object compared against a different right-hand object is a new
+# comparison that must be carried out.
+#
+# This lives here rather than in _make.py so that the functions in _make.py
+# don't have a direct reference to the thread-local in their globals dict.
+# If they have such a reference, it breaks cloudpickle.
+cycle_safe_eq_context = threading.local()
+
+
 def get_generic_base(cl):
     """If this is a generic class (A[str]), return the generic base for it."""
     if cl.__class__ is _GenericAlias:

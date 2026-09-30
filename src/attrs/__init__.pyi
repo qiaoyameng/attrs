@@ -183,6 +183,7 @@ def define(
     on_setattr: _OnSetAttrArgType | None = ...,
     field_transformer: _FieldTransformer | None = ...,
     match_args: bool = ...,
+    cycle_safe_eq: bool = ...,
 ) -> _C: ...
 @overload
 @dataclass_transform(field_specifiers=(attrib, field))
@@ -209,6 +210,7 @@ def define(
     on_setattr: _OnSetAttrArgType | None = ...,
     field_transformer: _FieldTransformer | None = ...,
     match_args: bool = ...,
+    cycle_safe_eq: bool = ...,
 ) -> Callable[[_C], _C]: ...
 
 mutable = define
@@ -238,6 +240,7 @@ def frozen(
     on_setattr: _OnSetAttrArgType | None = ...,
     field_transformer: _FieldTransformer | None = ...,
     match_args: bool = ...,
+    cycle_safe_eq: bool = ...,
 ) -> _C: ...
 @overload
 @dataclass_transform(frozen_default=True, field_specifiers=(attrib, field))
@@ -264,6 +267,7 @@ def frozen(
     on_setattr: _OnSetAttrArgType | None = ...,
     field_transformer: _FieldTransformer | None = ...,
     match_args: bool = ...,
+    cycle_safe_eq: bool = ...,
 ) -> Callable[[_C], _C]: ...
 
 class ClassProps:

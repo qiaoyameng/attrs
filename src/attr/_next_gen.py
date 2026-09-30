@@ -44,6 +44,7 @@ def define(
     field_transformer=None,
     match_args=True,
     force_kw_only=False,
+    cycle_safe_eq=False,
 ):
     r"""
     A class decorator that adds :term:`dunder methods` according to
@@ -142,6 +143,16 @@ def define(
             .. seealso::
                 `comparison` describes how to customize the comparison behavior
                 going as far comparing NumPy arrays.
+
+        cycle_safe_eq (bool):
+            If True, the generated ``__eq__`` keeps track of the object pairs
+            that are currently being compared (per thread) and stops recursing
+            when it encounters the same pair again to break cycles.
+            This allows comparing instances that form reference cycles -- for
+            example, nodes of a doubly-linked list.
+
+            Requires *eq* to be enabled. See `cycle-safe-eq` for details,
+            including the interaction with hashing.
 
         order (bool | None):
             If True, add ``__lt__``, ``__le__``, ``__gt__``, and ``__ge__``
@@ -335,6 +346,7 @@ def define(
     .. versionchanged:: 26.2.0
        *on_setattr* hooks can now be generator functions that yield exactly
        once.
+    .. versionadded:: 26.2.0 *cycle_safe_eq*
 
     .. note::
 
@@ -384,6 +396,7 @@ def define(
             field_transformer=field_transformer,
             match_args=match_args,
             force_kw_only=force_kw_only,
+            cycle_safe_eq=cycle_safe_eq,
         )
 
     def wrap(cls):

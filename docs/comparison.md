@@ -69,3 +69,59 @@ class C:
 Please note that *eq* and *order* are set *independently*, because *order* is `False` by default in {func}`~attrs.define` (but not in {func}`attr.s`).
 You can set both at once by using the *cmp* argument that we've undeprecated just for this use-case.
 :::
+
+(cycle-safe-eq)=
+
+## Cycle-Safe Equality
+
+By default, the generated ``__eq__`` compares fields recursively, so instances
+that contain reference cycles -- for example, the nodes of a doubly-linked
+list -- can't be compared: the recursion never terminates and raises a
+`RecursionError`.
+
+Passing ``cycle_safe_eq=True`` to {func}`attrs.define` (or {func}`attr.s`)
+opts into a cycle-safe ``__eq__``:
+
+```{doctest}
+>>> from attrs import define
+>>> @define(cycle_safe_eq=True)
+... class Node:
+...     value: int
+...     prev: "Node | None" = None
+...     next: "Node | None" = None
+
+>>> def make_ring(values):
+...     nodes = [Node(v) for v in values]
+...     for i, node in enumerate(nodes):
+...         node.prev = nodes[(i - 1) % len(nodes)]
+...         node.next = nodes[(i + 1) % len(nodes)]
+...     return nodes
+
+>>> make_ring([1, 2, 3]) == make_ring([1, 2, 3])
+True
+>>> make_ring([1, 2, 3]) == make_ring([1, 2, 4])
+False
+```
+
+While comparing two instances, *attrs* remembers the pair of objects that are
+currently being compared (keyed by *both* objects' identities, so the same
+left-hand object compared against a different right-hand object is still a
+new comparison). If the same pair is encountered again, the recursion stops
+and that pair is considered equal.
+
+The tracking state is kept per thread, is discarded as soon as the comparison
+returns -- even if a field's ``__eq__`` raises an exception -- and never
+leaks between threads. Field-level customization keeps working as usual:
+fields with ``eq=False`` are ignored, *eq* key functions are applied, and
+comparing against a different type still returns `NotImplemented`.
+
+:::{warning}
+Cycle-safe equality does **not** make cyclic instances hashable.
+``__hash__`` is only generated under the usual conditions (see `hashing`):
+for example, for frozen classes with ``eq=True``, or when explicitly
+requested using *unsafe_hash*. Even then, the generated ``__hash__`` hashes
+the same fields that ``__eq__`` compares, so hashing an instance whose
+hashed fields form a cycle recurses forever, just like before. If you need
+hashing on a cyclic class, exclude the cyclic fields from the hash (for
+example, with ``field(hash=False)``) or write your own ``__hash__``.
+:::

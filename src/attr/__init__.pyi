@@ -282,6 +282,7 @@ def attrs(
     field_transformer: _FieldTransformer | None = ...,
     match_args: bool = ...,
     unsafe_hash: bool | None = ...,
+    cycle_safe_eq: bool = ...,
 ) -> _C: ...
 @overload
 @dataclass_transform(order_default=True, field_specifiers=(attrib, field))
@@ -310,6 +311,7 @@ def attrs(
     field_transformer: _FieldTransformer | None = ...,
     match_args: bool = ...,
     unsafe_hash: bool | None = ...,
+    cycle_safe_eq: bool = ...,
 ) -> Callable[[_C], _C]: ...
 def fields(cls: type[AttrsInstance] | AttrsInstance) -> Any: ...
 def fields_dict(cls: type[AttrsInstance]) -> dict[str, Attribute[Any]]: ...

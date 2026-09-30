@@ -658,6 +658,7 @@ class _ClassBuilder:
         "_cache_hash",
         "_cls",
         "_cls_dict",
+        "_cycle_safe_eq",
         "_delete_attribs",
         "_frozen",
         "_has_custom_setattr",
@@ -680,6 +681,7 @@ class _ClassBuilder:
         auto_attribs: bool,
         props: ClassProps,
         has_custom_setattr: bool,
+        cycle_safe_eq: bool = False,
     ):
         attrs, base_attrs, base_map = _transform_attrs(
             cls,
@@ -719,6 +721,7 @@ class _ClassBuilder:
 
         self._has_custom_setattr = has_custom_setattr
         self._wrote_own_setattr = False
+        self._cycle_safe_eq = cycle_safe_eq
 
         self._cls_dict["__attrs_attrs__"] = self._attrs
         self._cls_dict["__attrs_props__"] = props
@@ -1150,7 +1153,9 @@ class _ClassBuilder:
     def add_eq(self):
         cd = self._cls_dict
 
-        script, globs = _make_eq_script(self._attrs)
+        script, globs = _make_eq_script(
+            self._attrs, cycle_safe=self._cycle_safe_eq
+        )
 
         def _attach_eq(cls_dict, globs):
             cls_dict["__eq__"] = self._add_method_dunders(globs["__eq__"])
@@ -1376,6 +1381,7 @@ def attrs(
     match_args=True,
     unsafe_hash=None,
     force_kw_only=True,
+    cycle_safe_eq=False,
 ):
     r"""
     A class decorator that adds :term:`dunder methods` according to the
@@ -1455,6 +1461,7 @@ def attrs(
        *kw_only* now only applies to attributes defined in the current class,
        and respects attribute-level ``kw_only=False`` settings.
     .. versionadded:: 25.4.0 *force_kw_only*
+    .. versionadded:: 26.2.0 *cycle_safe_eq*
     """
     if repr_ns is not None:
         import warnings
@@ -1490,6 +1497,10 @@ def attrs(
         eq = not is_exc and _determine_whether_to_implement(
             cls, eq_, auto_detect, ("__eq__", "__ne__")
         )
+
+        if cycle_safe_eq and not eq:
+            msg = "Invalid value for cycle_safe_eq.  To use cycle-safe equality, eq must be enabled."
+            raise TypeError(msg)
 
         Hashability = ClassProps.Hashability
 
@@ -1571,6 +1582,7 @@ def attrs(
             auto_attribs=auto_attribs,
             props=props,
             has_custom_setattr=has_own_setattr,
+            cycle_safe_eq=cycle_safe_eq,
         )
 
         if props.added_repr:
@@ -1739,7 +1751,7 @@ def __ne__(self, other):
     return not result
 
 
-def _make_eq_script(attrs: list) -> tuple[str, dict]:
+def _make_eq_script(attrs: list, cycle_safe: bool = False) -> tuple[str, dict]:
     """
     Create __eq__ method for *cls* with *attrs*.
     """
@@ -1752,8 +1764,26 @@ def _make_eq_script(attrs: list) -> tuple[str, dict]:
     ]
 
     globs = {}
+    if cycle_safe:
+        globs["_compat"] = _compat
+        lines.extend([
+            "    try:",
+            "        seen = _compat.cycle_safe_eq_context.seen",
+            "    except AttributeError:",
+            "        seen = set()",
+            "        _compat.cycle_safe_eq_context.seen = seen",
+            "    key = (id(self), id(other))",
+            "    if key in seen:",
+            "        return True",
+            "    seen.add(key)",
+            "    try:",
+        ])
+        indent = "        "
+    else:
+        indent = "    "
+
     if attrs:
-        lines.append("    return  (")
+        lines.append(f"{indent}return  (")
         for a in attrs:
             if a.eq_key:
                 cmp_name = f"_{a.name}_key"
@@ -1761,15 +1791,21 @@ def _make_eq_script(attrs: list) -> tuple[str, dict]:
                 # of the evaluated function.
                 globs[cmp_name] = a.eq_key
                 lines.append(
-                    f"        {cmp_name}(self.{a.name}) == {cmp_name}(other.{a.name})"
+                    f"{indent}    {cmp_name}(self.{a.name}) == {cmp_name}(other.{a.name})"
                 )
             else:
-                lines.append(f"        self.{a.name} == other.{a.name}")
+                lines.append(f"{indent}    self.{a.name} == other.{a.name}")
             if a is not attrs[-1]:
                 lines[-1] = f"{lines[-1]} and"
-        lines.append("    )")
+        lines.append(f"{indent})")
     else:
-        lines.append("    return True")
+        lines.append(f"{indent}return True")
+
+    if cycle_safe:
+        lines.extend([
+            "    finally:",
+            "        seen.discard(key)",
+        ])
 
     script = "\n".join(lines)
 
