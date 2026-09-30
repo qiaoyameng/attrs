@@ -273,6 +273,35 @@ You can use the `attrs.Attribute.alias_is_default` flag to detect whether an ali
 Data(public=42, _private='spam', explicit='yes')
 ```
 
+If multiple extensions need a *field_transformer*, combine them as named
+stages instead of nesting their callbacks by hand.
+Stages run in declaration order and receive the field list produced by the
+previous stage.
+By default, two stages that change the same field attribute raise
+`attrs.exceptions.FieldTransformerConflictError`; the error identifies the
+field, attribute, and both stages.
+Set *allow_overrides* on a stage, or on the combined transformer, when later
+stages are intentionally authoritative.
+
+```{doctest}
+>>> from attrs import FieldTransformerStage, combine_field_transformers
+>>> def set_type(cls, fields):
+...     return [f.evolve(type=str) for f in fields]
+...
+>>> def set_alias(cls, fields):
+...     return [f.evolve(alias=f.name) if f.alias_is_default else f for f in fields]
+...
+>>> transformer = combine_field_transformers(
+...     FieldTransformerStage("type", set_type),
+...     FieldTransformerStage("alias", set_alias),
+... )
+```
+
+On subclasses, stages with *apply_to_new_fields=True* are replayed only on
+fields introduced by that subclass.
+Fields already transformed on a base class remain unchanged, so converter
+stages do not wrap the same inherited value twice.
+
 ## Customize Value Serialization in `asdict()`
 
 *attrs* allows you to serialize instances of *attrs* classes to dicts using the {func}`attrs.asdict` function.

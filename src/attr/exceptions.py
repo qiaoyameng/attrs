@@ -93,3 +93,32 @@ class NotCallableError(TypeError):
 
     def __str__(self):
         return str(self.msg)
+
+
+class FieldTransformerConflictError(ValueError):
+    """
+    Multiple field transformer stages changed the same field attribute.
+
+    Attributes:
+        conflicts:
+            Tuples identifying the field, field attribute, first stage, and
+            second stage for every detected conflict.
+
+    .. versionadded:: 26.2.0
+    """
+
+    def __init__(self, conflicts):
+        self.conflicts = tuple(conflicts)
+
+        details = "; ".join(
+            "field {field!r}, attribute {attribute!r}, stages "
+            "{first_stage!r} and {second_stage!r}".format(
+                field=conflict.field_name,
+                attribute=conflict.attribute_name,
+                first_stage=conflict.first_stage,
+                second_stage=conflict.second_stage,
+            )
+            for conflict in self.conflicts
+        )
+        msg = f"Conflicting field transformer changes: {details}"
+        super().__init__(msg)

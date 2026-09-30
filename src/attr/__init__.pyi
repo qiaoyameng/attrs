@@ -36,6 +36,11 @@ from attrs import (
     _FieldTransformer,
     _ValidatorArgType,
 )
+from attrs import (
+    FieldTransformerConflict as FieldTransformerConflict,
+    FieldTransformerStage as FieldTransformerStage,
+    combine_field_transformers as combine_field_transformers,
+)
 
 if sys.version_info >= (3, 10):
     from typing import TypeGuard, TypeAlias

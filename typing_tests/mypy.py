@@ -347,6 +347,20 @@ class TransformedAttrs:
     x: int
 
 
+ft_pipeline = attr.combine_field_transformers(
+    attr.FieldTransformerStage(
+        "typed-fields",
+        ft_hook,
+        apply_to_new_fields=True,
+    )
+)
+
+
+@attr.s(field_transformer=ft_pipeline)
+class StagedTransformedAttrs:
+    x: int
+
+
 # Auto-detect
 @attr.s(auto_detect=True)
 class AutoDetect:

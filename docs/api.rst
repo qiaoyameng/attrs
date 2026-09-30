@@ -40,6 +40,14 @@ Core
 .. autoclass:: Attribute
    :members: evolve
 
+.. autoclass:: FieldTransformerStage
+   :members:
+
+.. autoclass:: FieldTransformerConflict
+   :members:
+
+.. autofunction:: combine_field_transformers
+
    For example:
 
    .. doctest::
@@ -122,6 +130,7 @@ That means that it doesn't matter from from which namespace they've been raised 
 .. autoexception:: DefaultAlreadySetError
 .. autoexception:: NotCallableError
 .. autoexception:: UnannotatedAttributeError
+.. autoexception:: FieldTransformerConflictError
 
    For example::
 

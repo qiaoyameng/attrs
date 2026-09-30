@@ -65,6 +65,36 @@ _OnSetAttrArgType = _OnSetAttrType | list[_OnSetAttrType] | setters._NoOpType
 _FieldTransformer = Callable[
     [type, list["Attribute[Any]"]], list["Attribute[Any]"]
 ]
+
+
+class FieldTransformerStage(
+    tuple[str, _FieldTransformer, bool, bool]
+):
+    name: str
+    transformer: _FieldTransformer
+    apply_to_new_fields: bool
+    allow_overrides: bool
+
+    def __new__(
+        cls,
+        name: str,
+        transformer: _FieldTransformer,
+        apply_to_new_fields: bool = ...,
+        allow_overrides: bool = ...,
+    ) -> FieldTransformerStage: ...
+
+
+class FieldTransformerConflict(tuple[str, str, str, str]):
+    field_name: str
+    attribute_name: str
+    first_stage: str
+    second_stage: str
+
+
+def combine_field_transformers(
+    *stages: FieldTransformerStage | _FieldTransformer,
+    allow_overrides: bool = ...,
+) -> _FieldTransformer: ...
 # FIXME: in reality, if multiple validators are passed they must be in a list
 # or tuple, but those are invariant and so would prevent subtypes of
 # _ValidatorType from working when passed in a list or tuple.

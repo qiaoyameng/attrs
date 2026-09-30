@@ -10,6 +10,11 @@ from functools import partial
 from typing import Callable, Literal, Protocol
 
 from . import exceptions, setters
+from ._field_transformer import (
+    FieldTransformerConflict,
+    FieldTransformerStage,
+    combine_field_transformers,
+)
 from ._cmp import cmp_using
 from ._config import get_run_validators, set_run_validators
 from ._funcs import asdict, assoc, astuple, has, resolve_types
@@ -48,6 +53,8 @@ __all__ = [
     "AttrsInstance",
     "Converter",
     "Factory",
+    "FieldTransformerConflict",
+    "FieldTransformerStage",
     "NothingType",
     "asdict",
     "assoc",
@@ -57,6 +64,7 @@ __all__ = [
     "attributes",
     "attrs",
     "cmp_using",
+    "combine_field_transformers",
     "converters",
     "define",
     "evolve",
