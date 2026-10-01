@@ -644,6 +644,271 @@ class TestFunctional:
 
         assert ei.value.args[0] in possible_errors
 
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering(self, slots):
+        """
+        Fields can independently specify direction and None placement.
+        """
+
+        @attr.define(order=True, slots=slots)
+        class LeaderboardEntry:
+            score: int = attr.field(order_reverse=True)
+            timestamp: int | None = attr.field(order_none_last=True)
+
+        entries = [
+            LeaderboardEntry(10, 2),
+            LeaderboardEntry(20, None),
+            LeaderboardEntry(20, 1),
+            LeaderboardEntry(20, 2),
+        ]
+
+        assert [(entry.score, entry.timestamp) for entry in sorted(entries)] == [
+            (20, 1),
+            (20, 2),
+            (20, None),
+            (10, 2),
+        ]
+
+        missing_time = LeaderboardEntry(20, None)
+        known_time = LeaderboardEntry(20, 2)
+
+        assert known_time < missing_time
+        assert not (known_time > missing_time)
+        assert missing_time > known_time
+        assert not (missing_time < known_time)
+
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering_key_direction_and_none(self, slots):
+        """
+        Order keys retain their value transformation and None handling.
+        """
+        custom_order_key = attr.order_key(int, reverse=True, none_last=True)
+
+        @attr.define(order=True, slots=slots)
+        class C:
+            value: str = attr.field(order=custom_order_key)
+
+        assert attr.fields(C).value.order_key is custom_order_key
+        assert C("10") < C("2")
+        assert not (C(None) >= C("10"))
+        assert C("10") < C(None)
+
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering_plain_key_remains_callable(self, slots):
+        """
+        A plain order key remains the stored key callable.
+        """
+
+        @attr.define(order=True, slots=slots)
+        class C:
+            value: str = attr.field(order=int)
+
+        assert attr.fields(C).value.order_key is int
+
+    def test_order_key_pickle(self):
+        """
+        Order keys survive pickling.
+        """
+        custom_order_key = attr.order_key(int, reverse=True, none_last=True)
+
+        restored = pickle.loads(pickle.dumps(custom_order_key))
+
+        assert restored == custom_order_key
+        assert hash(restored) == hash(custom_order_key)
+        assert restored.key is int
+        assert restored.reverse is True
+        assert restored.none_last is True
+
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering_options_partially_override_order_key(self, slots):
+        """
+        Field options only override the order key option they name.
+        """
+
+        @attr.define(order=True, slots=slots)
+        class C:
+            value: str = attr.field(
+                order=attr.order_key(int, reverse=True, none_last=True),
+                order_reverse=False,
+            )
+
+        assert attr.fields(C).value.order_key.key is int
+        assert attr.fields(C).value.order_key.reverse is False
+        assert attr.fields(C).value.order_key.none_last is True
+
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering_eq_is_unaffected(self, slots):
+        """
+        Equality does not change when ordering is reversed.
+        """
+
+        @attr.define(order=True, slots=slots)
+        class C:
+            value: int = attr.field(order_reverse=True)
+
+        assert C(1) == C(1)
+        assert C(1) != C(2)
+        assert C(2) < C(1)
+        assert C(1) > C(2)
+
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering_override_inherited_field(self, slots):
+        """
+        A subclass can change ordering of an inherited field.
+        """
+
+        @attr.define(order=True, slots=slots)
+        class Base:
+            value: int
+
+        @attr.define(order=True, slots=slots)
+        class Sub(Base):
+            value: int = attr.field(order_reverse=True)
+
+        assert Sub(2) < Sub(1)
+        assert attr.fields(Base).value.order is True
+        assert attr.fields(Sub).value.order_key.reverse is True
+
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering_all_keys_equal(self, slots):
+        """
+        Equal order keys are equal under all ordering operators.
+        """
+
+        @attr.define(order=True, slots=slots)
+        class C:
+            first: int = attr.field(order_reverse=True)
+            second: int = attr.field(order_none_last=True)
+
+        left = C(1, None)
+        right = C(1, None)
+
+        assert left == right
+        assert not (left < right)
+        assert left <= right
+        assert not (left > right)
+        assert left >= right
+
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering_nan(self, slots):
+        """
+        NaN follows Python scalar ordering under every operator.
+        """
+
+        @attr.define(order=True, slots=slots)
+        class Ascending:
+            value: float
+
+        @attr.define(order=True, slots=slots)
+        class Descending:
+            value: float = attr.field(order_reverse=True)
+
+        for cls in (Ascending, Descending):
+            left = cls(float("nan"))
+            right = cls(float("nan"))
+
+            assert not (left == right)
+            assert not (left < right)
+            assert not (left <= right)
+            assert not (left > right)
+            assert not (left >= right)
+
+            assert not (left < left)
+            assert not (left <= left)
+            assert not (left > left)
+            assert not (left >= left)
+
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering_incomparable_values_raise(self, slots):
+        """
+        Incomparable values follow Python's TypeError behavior.
+        """
+
+        @attr.define(order=True, slots=slots)
+        class C:
+            value: object
+
+        with pytest.raises(TypeError):
+            C(1) < C("2")
+
+        class NotOrderable:
+            def __lt__(self, other):
+                return NotImplemented
+
+            def __gt__(self, other):
+                return NotImplemented
+
+            def __le__(self, other):
+                return NotImplemented
+
+            def __ge__(self, other):
+                return NotImplemented
+
+        left = C(NotOrderable())
+        right = C(NotOrderable())
+
+        for comparison in (
+            lambda: left < right,
+            lambda: left <= right,
+            lambda: left > right,
+            lambda: left >= right,
+        ):
+            with pytest.raises(TypeError):
+                comparison()
+
+    @pytest.mark.parametrize("slots", [True, False])
+    def test_field_ordering_short_circuits_fields(self, slots):
+        """
+        Earlier decisive fields prevent later values from being compared.
+        """
+
+        @attr.define(order=True, slots=slots)
+        class C:
+            first: int
+            second: object
+
+        assert C(1, None) < C(2, object())
+
+    def test_field_ordering_requires_order(self):
+        """
+        Ordering options require ordering to be enabled.
+        """
+        with pytest.raises(ValueError, match="`order` must be enabled"):
+
+            @attr.define
+            class C:
+                value = attr.field(order=False, order_reverse=True)
+
+    def test_field_ordering_does_not_mix_with_cmp(self):
+        """
+        Ordering options follow the cmp/eq/order exclusivity rule.
+        """
+        with pytest.raises(ValueError, match="Don't mix"):
+
+            @attr.s
+            class C:
+                value = attr.ib(cmp=True, order_reverse=True)
+
+    def test_field_ordering_order_key_does_not_belong_in_eq(self):
+        """
+        Order keys are rejected by equality configuration.
+        """
+        with pytest.raises(ValueError, match="only be passed to `order`"):
+
+            @attr.s
+            class C:
+                value = attr.ib(eq=attr.order_key())
+
+    def test_field_ordering_order_key_does_not_belong_in_cmp(self):
+        """
+        Order keys are rejected by combined comparison configuration.
+        """
+        with pytest.raises(ValueError, match="only be passed to `order`"):
+
+            @attr.s
+            class C:
+                value = attr.ib(cmp=attr.order_key())
+
     @pytest.mark.parametrize("cmp", [True, False])
     def test_attrib_cmp_shortcut(self, slots, cmp):
         """

@@ -27,6 +27,7 @@ from ._compat import (
     _lazy_is_generator,
     get_generic_base,
 )
+from ._ordering import OrderKey, _field_order_key, compare_order
 from .exceptions import (
     DefaultAlreadySetError,
     FrozenInstanceError,
@@ -117,6 +118,8 @@ def attrib(
     order=None,
     on_setattr=None,
     alias=None,
+    order_reverse=None,
+    order_none_last=None,
 ):
     """
     Create a new field / attribute on a class.
@@ -161,9 +164,16 @@ def attrib(
     .. versionchanged:: 26.2.0
        *on_setattr* hooks can now be generator functions to run code before and
        after an attribute is set.
+    .. versionchanged:: 26.2.0
+       Added *order_reverse* and *order_none_last* for per-field ordering.
     """
     eq, eq_key, order, order_key = _determine_attrib_eq_order(
-        cmp, eq, order, True
+        cmp,
+        eq,
+        order,
+        True,
+        reverse=order_reverse,
+        none_last=order_none_last,
     )
 
     if hash is not None and hash is not True and hash is not False:
@@ -1281,12 +1291,22 @@ def _determine_attrs_eq_order(cmp, eq, order, default_eq):
     return eq, order
 
 
-def _determine_attrib_eq_order(cmp, eq, order, default_eq):
+def _determine_attrib_eq_order(
+    cmp,
+    eq,
+    order,
+    default_eq,
+    reverse=None,
+    none_last=None,
+):
     """
     Validate the combination of *cmp*, *eq*, and *order*. Derive the effective
     values of eq and order.  If *eq* is None, set it to *default_eq*.
     """
-    if cmp is not None and any((eq is not None, order is not None)):
+    has_ordering_config = reverse is not None or none_last is not None
+    if cmp is not None and (
+        any((eq is not None, order is not None)) or has_ordering_config
+    ):
         msg = "Don't mix `cmp` with `eq' and `order`."
         raise ValueError(msg)
 
@@ -1294,11 +1314,45 @@ def _determine_attrib_eq_order(cmp, eq, order, default_eq):
         """
         Decide whether a key function is used.
         """
+        if isinstance(value, OrderKey):
+            return True, value
         if callable(value):
             value, key = True, value
         else:
             key = None
         return value, key
+
+    if isinstance(eq, OrderKey) or (
+        cmp is not None and isinstance(cmp, OrderKey)
+    ):
+        msg = "Order keys can only be passed to `order`."
+        raise ValueError(msg)
+
+    if reverse is not None or none_last is not None:
+        if isinstance(order, OrderKey):
+            key = order.key
+        elif callable(order):
+            key = order
+        elif order is False:
+            msg = "`order` must be enabled to configure ordering."
+            raise ValueError(msg)
+        else:
+            key = None
+
+        existing_order_key = order if isinstance(order, OrderKey) else None
+        order = OrderKey(
+            key=key,
+            reverse=(
+                existing_order_key.reverse
+                if existing_order_key is not None and reverse is None
+                else bool(reverse)
+            ),
+            none_last=(
+                existing_order_key.none_last
+                if existing_order_key is not None and none_last is None
+                else bool(none_last)
+            ),
+        )
 
     # cmp takes precedence due to bw-compatibility.
     if cmp is not None:
@@ -1781,6 +1835,15 @@ def _make_order(cls, attrs):
     Create ordering methods for *cls* with *attrs*.
     """
     attrs = [a for a in attrs if a.order]
+    order_key_configs = [
+        a.order_key
+        if isinstance(a.order_key, OrderKey)
+        else OrderKey(key=a.order_key)
+        for a in attrs
+    ]
+    order_keys = [
+        _field_order_key(order_key) for order_key in order_key_configs
+    ]
 
     def attrs_to_tuple(obj):
         """
@@ -1789,8 +1852,18 @@ def _make_order(cls, attrs):
         return tuple(
             key(value) if key else value
             for value, key in (
-                (getattr(obj, a.name), a.order_key) for a in attrs
+                (getattr(obj, a.name), key)
+                for a, key in zip(attrs, order_keys, strict=True)
             )
+        )
+
+    def compare(obj, other, *, less, equals):
+        return compare_order(
+            attrs_to_tuple(obj),
+            attrs_to_tuple(other),
+            order_key_configs,
+            less=less,
+            equals=equals,
         )
 
     def __lt__(self, other):
@@ -1798,7 +1871,7 @@ def _make_order(cls, attrs):
         Automatically created by attrs.
         """
         if other.__class__ is self.__class__:
-            return attrs_to_tuple(self) < attrs_to_tuple(other)
+            return compare(self, other, less=True, equals=False)
 
         return NotImplemented
 
@@ -1807,7 +1880,7 @@ def _make_order(cls, attrs):
         Automatically created by attrs.
         """
         if other.__class__ is self.__class__:
-            return attrs_to_tuple(self) <= attrs_to_tuple(other)
+            return compare(self, other, less=True, equals=True)
 
         return NotImplemented
 
@@ -1816,7 +1889,7 @@ def _make_order(cls, attrs):
         Automatically created by attrs.
         """
         if other.__class__ is self.__class__:
-            return attrs_to_tuple(self) > attrs_to_tuple(other)
+            return compare(self, other, less=False, equals=False)
 
         return NotImplemented
 
@@ -1825,7 +1898,7 @@ def _make_order(cls, attrs):
         Automatically created by attrs.
         """
         if other.__class__ is self.__class__:
-            return attrs_to_tuple(self) >= attrs_to_tuple(other)
+            return compare(self, other, less=False, equals=True)
 
         return NotImplemented
 
@@ -2477,10 +2550,12 @@ class Attribute:
       generated (``True``) or explicitly provided by the user (``False``).
     - ``inherited`` (`bool`): Whether or not that attribute has been inherited
       from a base class.
-    - ``eq_key`` and ``order_key`` (`typing.Callable` or `None`): The
-      callables that are used for comparing and ordering objects by this
-      attribute, respectively. These are set by passing a callable to
-      `attr.ib`'s ``eq``, ``order``, or ``cmp`` arguments. See also
+    - ``eq_key`` (`typing.Callable` or `None`): The callable used for
+      comparing objects by this attribute.
+    - ``order_key`` (`typing.Callable`, `OrderKey`, or `None`): The callable
+      or order key used for ordering objects by this attribute. These are
+      set by passing a callable or `order_key` to `attr.ib`'s ``order``
+      argument, or by using ``order_reverse`` / ``order_none_last``. See also
       :ref:`comparison customization <custom-comparison>`.
 
     Instances of this class are frequently used for introspection purposes

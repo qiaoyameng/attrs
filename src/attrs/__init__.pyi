@@ -36,6 +36,8 @@ from attr import filters as filters
 from attr import has as has
 from attr import make_class as make_class
 from attr import NOTHING as NOTHING
+from attr import OrderKey as OrderKey
+from attr import order_key as order_key
 from attr import resolve_types as resolve_types
 from attr import setters as setters
 from attr import validate as validate
@@ -51,7 +53,9 @@ else:
 _T = TypeVar("_T")
 _C = TypeVar("_C", bound=type)
 
-_EqOrderType = bool | Callable[[Any], Any]
+_EqType = bool | Callable[[Any], Any]
+_OrderType = _EqType | OrderKey
+_EqOrderType = _OrderType
 _ValidatorType = Callable[[Any, "Attribute[_T]", _T], Any]
 _CallableConverterType = Callable[[Any], Any]
 _ConverterType = _CallableConverterType | Converter[Any, Any]
@@ -82,10 +86,12 @@ def field(
     converter: None = ...,
     factory: None = ...,
     kw_only: bool | None = ...,
-    eq: bool | None = ...,
-    order: bool | None = ...,
+    eq: _EqType | None = ...,
+    order: _OrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
+    order_reverse: bool | None = ...,
+    order_none_last: bool | None = ...,
     type: type | None = ...,
 ) -> Any: ...
 
@@ -106,10 +112,12 @@ def field(
     | None = ...,
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _OrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
+    order_reverse: bool | None = ...,
+    order_none_last: bool | None = ...,
     type: type | None = ...,
 ) -> _T: ...
 
@@ -129,10 +137,12 @@ def field(
     | None = ...,
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _OrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
+    order_reverse: bool | None = ...,
+    order_none_last: bool | None = ...,
     type: type | None = ...,
 ) -> _T: ...
 
@@ -152,10 +162,12 @@ def field(
     | None = ...,
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _OrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
+    order_reverse: bool | None = ...,
+    order_none_last: bool | None = ...,
     type: type | None = ...,
 ) -> Any: ...
 @overload

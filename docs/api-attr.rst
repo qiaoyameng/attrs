@@ -136,6 +136,10 @@ Helpers
 
    Same as `attrs.cmp_using`.
 
+.. function:: order_key
+
+   Same as `attrs.order_key`.
+
 .. function:: fields
 
    Same as `attrs.fields`.

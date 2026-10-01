@@ -142,6 +142,8 @@ Helpers
 
 .. autofunction:: attrs.cmp_using
 
+.. autofunction:: attrs.order_key
+
 .. autofunction:: attrs.fields
 
    For example:

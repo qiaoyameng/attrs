@@ -447,6 +447,8 @@ def field(
     order=None,
     on_setattr=None,
     alias=None,
+    order_reverse=None,
+    order_none_last=None,
 ):
     """
     Create a new :term:`field` / :term:`attribute` on a class.
@@ -520,6 +522,14 @@ def field(
             takes a single value and returns the value to be ordered.
 
             .. seealso:: `comparison`
+
+        order_reverse (bool | None):
+            Reverse ordering for this attribute. This is useful for ordering
+            some fields in descending order and others in ascending order.
+
+        order_none_last (bool | None):
+            Place `None` values after non-`None` values in this attribute's
+            ordering.
 
         hash (bool | None):
             Include this attribute in the generated ``__hash__`` method.  If
@@ -601,6 +611,8 @@ def field(
     .. versionchanged:: 26.2.0
        *on_setattr* hooks can now be generator functions that yield exactly
        once.
+    .. versionchanged:: 26.2.0
+       Added *order_reverse* and *order_none_last* for per-field ordering.
 
     .. seealso::
 
@@ -619,6 +631,8 @@ def field(
         kw_only=kw_only,
         eq=eq,
         order=order,
+        order_reverse=order_reverse,
+        order_none_last=order_none_last,
         on_setattr=on_setattr,
         alias=alias,
     )

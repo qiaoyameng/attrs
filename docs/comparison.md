@@ -50,6 +50,28 @@ True
 True
 ```
 
+Fields can also be ordered in different directions and can control where
+`None` values belong:
+
+```{doctest}
+>>> @define(order=True)
+... class LeaderboardEntry:
+...     score: int = field(order_reverse=True)
+...     timestamp: int | None = field(order_none_last=True)
+
+>>> sorted([
+...     LeaderboardEntry(10, 2),
+...     LeaderboardEntry(20, None),
+...     LeaderboardEntry(20, 1),
+...     LeaderboardEntry(20, 2),
+... ])
+[LeaderboardEntry(score=20, timestamp=1), LeaderboardEntry(score=20, timestamp=2), LeaderboardEntry(score=20, timestamp=None), LeaderboardEntry(score=10, timestamp=2)]
+```
+
+Use {func}`attrs.order_key` to combine these options with an order key.
+Direction and `None` placement only affect ordering; equality continues to use
+the field's *eq* setting.
+
 This is especially useful when you have fields with objects that have atypical comparison properties.
 Common examples of such objects are [NumPy arrays](https://github.com/python-attrs/attrs/issues/435).
 

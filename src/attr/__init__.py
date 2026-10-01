@@ -28,6 +28,7 @@ from ._make import (
     validate,
 )
 from ._next_gen import define, field, frozen, mutable
+from ._ordering import OrderKey, order_key
 from ._version_info import VersionInfo
 
 
@@ -49,6 +50,7 @@ __all__ = [
     "Converter",
     "Factory",
     "NothingType",
+    "OrderKey",
     "asdict",
     "assoc",
     "astuple",
@@ -71,6 +73,7 @@ __all__ = [
     "ib",
     "make_class",
     "mutable",
+    "order_key",
     "resolve_types",
     "s",
     "set_run_validators",

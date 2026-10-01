@@ -20,6 +20,8 @@ from . import filters as filters
 from . import setters as setters
 from . import validators as validators
 from ._cmp import cmp_using as cmp_using
+from ._ordering import OrderKey as OrderKey
+from ._ordering import order_key as order_key
 from ._typing_compat import AttrsInstance_
 from ._version_info import VersionInfo
 from attrs import (
@@ -27,7 +29,9 @@ from attrs import (
     field as field,
     mutable as mutable,
     frozen as frozen,
+    _EqType,
     _EqOrderType,
+    _OrderType,
     _ValidatorType,
     _ConverterType,
     _ReprArgType,
@@ -126,9 +130,11 @@ class Attribute(Generic[_T]):
     default: _T | None
     validator: _ValidatorType[_T] | None
     repr: _ReprArgType
-    cmp: _EqOrderType
-    eq: _EqOrderType
-    order: _EqOrderType
+    cmp: _EqType
+    eq: _EqType
+    eq_key: Callable[[Any], Any] | None
+    order: bool
+    order_key: _EqOrderType | OrderKey
     hash: bool | None
     init: bool
     converter: Converter | None
@@ -172,7 +178,7 @@ def attrib(
     default: None = ...,
     validator: None = ...,
     repr: _ReprArgType = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _EqType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     metadata: Mapping[Any, Any] | None = ...,
@@ -180,10 +186,12 @@ def attrib(
     converter: None = ...,
     factory: None = ...,
     kw_only: bool | None = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _OrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
+    order_reverse: bool | None = ...,
+    order_none_last: bool | None = ...,
 ) -> Any: ...
 
 # This form catches an explicit None or no default and infers the type from the
@@ -193,7 +201,7 @@ def attrib(
     default: None = ...,
     validator: _ValidatorArgType[_T] | None = ...,
     repr: _ReprArgType = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _EqType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     metadata: Mapping[Any, Any] | None = ...,
@@ -204,10 +212,12 @@ def attrib(
     | None = ...,
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _OrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
+    order_reverse: bool | None = ...,
+    order_none_last: bool | None = ...,
 ) -> _T: ...
 
 # This form catches an explicit default argument.
@@ -216,7 +226,7 @@ def attrib(
     default: _T,
     validator: _ValidatorArgType[_T] | None = ...,
     repr: _ReprArgType = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _EqType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     metadata: Mapping[Any, Any] | None = ...,
@@ -227,10 +237,12 @@ def attrib(
     | None = ...,
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _OrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
+    order_reverse: bool | None = ...,
+    order_none_last: bool | None = ...,
 ) -> _T: ...
 
 # This form covers type=non-Type: e.g. forward references (str), Any
@@ -239,7 +251,7 @@ def attrib(
     default: _T | None = ...,
     validator: _ValidatorArgType[_T] | None = ...,
     repr: _ReprArgType = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _EqType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     metadata: Mapping[Any, Any] | None = ...,
@@ -250,10 +262,12 @@ def attrib(
     | None = ...,
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _OrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
+    order_reverse: bool | None = ...,
+    order_none_last: bool | None = ...,
 ) -> Any: ...
 @overload
 @dataclass_transform(order_default=True, field_specifiers=(attrib, field))
@@ -262,7 +276,7 @@ def attrs(
     these: dict[str, Any] | None = ...,
     repr_ns: str | None = ...,
     repr: bool = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _EqType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     slots: bool = ...,
@@ -273,8 +287,8 @@ def attrs(
     kw_only: bool = ...,
     cache_hash: bool = ...,
     auto_exc: bool = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _EqType | None = ...,
     auto_detect: bool = ...,
     collect_by_mro: bool = ...,
     getstate_setstate: bool | None = ...,
@@ -290,7 +304,7 @@ def attrs(
     these: dict[str, Any] | None = ...,
     repr_ns: str | None = ...,
     repr: bool = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _EqType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     slots: bool = ...,
@@ -301,8 +315,8 @@ def attrs(
     kw_only: bool = ...,
     cache_hash: bool = ...,
     auto_exc: bool = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _EqType | None = ...,
     auto_detect: bool = ...,
     collect_by_mro: bool = ...,
     getstate_setstate: bool | None = ...,
@@ -332,7 +346,7 @@ def make_class(
     class_body: dict[str, Any] | None = ...,
     repr_ns: str | None = ...,
     repr: bool = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _EqType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     slots: bool = ...,
@@ -343,8 +357,8 @@ def make_class(
     kw_only: bool = ...,
     cache_hash: bool = ...,
     auto_exc: bool = ...,
-    eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    eq: _EqType | None = ...,
+    order: _EqType | None = ...,
     collect_by_mro: bool = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     field_transformer: _FieldTransformer | None = ...,
