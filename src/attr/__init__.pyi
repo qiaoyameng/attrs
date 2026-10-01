@@ -19,6 +19,7 @@ from . import exceptions as exceptions
 from . import filters as filters
 from . import setters as setters
 from . import validators as validators
+from ._cmp import Order as Order
 from ._cmp import cmp_using as cmp_using
 from ._typing_compat import AttrsInstance_
 from ._version_info import VersionInfo
@@ -28,6 +29,8 @@ from attrs import (
     mutable as mutable,
     frozen as frozen,
     _EqOrderType,
+    _FieldCmpType,
+    _FieldOrderType,
     _ValidatorType,
     _ConverterType,
     _ReprArgType,
@@ -126,9 +129,9 @@ class Attribute(Generic[_T]):
     default: _T | None
     validator: _ValidatorType[_T] | None
     repr: _ReprArgType
-    cmp: _EqOrderType
+    cmp: _FieldCmpType
     eq: _EqOrderType
-    order: _EqOrderType
+    order: _FieldOrderType
     hash: bool | None
     init: bool
     converter: Converter | None
@@ -172,7 +175,7 @@ def attrib(
     default: None = ...,
     validator: None = ...,
     repr: _ReprArgType = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _FieldCmpType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     metadata: Mapping[Any, Any] | None = ...,
@@ -181,7 +184,7 @@ def attrib(
     factory: None = ...,
     kw_only: bool | None = ...,
     eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    order: _FieldOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
 ) -> Any: ...
@@ -193,7 +196,7 @@ def attrib(
     default: None = ...,
     validator: _ValidatorArgType[_T] | None = ...,
     repr: _ReprArgType = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _FieldCmpType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     metadata: Mapping[Any, Any] | None = ...,
@@ -205,7 +208,7 @@ def attrib(
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
     eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    order: _FieldOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
 ) -> _T: ...
@@ -216,7 +219,7 @@ def attrib(
     default: _T,
     validator: _ValidatorArgType[_T] | None = ...,
     repr: _ReprArgType = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _FieldCmpType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     metadata: Mapping[Any, Any] | None = ...,
@@ -228,7 +231,7 @@ def attrib(
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
     eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    order: _FieldOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
 ) -> _T: ...
@@ -239,7 +242,7 @@ def attrib(
     default: _T | None = ...,
     validator: _ValidatorArgType[_T] | None = ...,
     repr: _ReprArgType = ...,
-    cmp: _EqOrderType | None = ...,
+    cmp: _FieldCmpType | None = ...,
     hash: bool | None = ...,
     init: bool = ...,
     metadata: Mapping[Any, Any] | None = ...,
@@ -251,7 +254,7 @@ def attrib(
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
     eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    order: _FieldOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
 ) -> Any: ...

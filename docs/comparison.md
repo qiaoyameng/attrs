@@ -50,6 +50,31 @@ True
 True
 ```
 
+To control the direction of a field or the position of `None`, use {class}`attrs.Order`:
+
+```{doctest}
+>>> from attrs import Order
+>>> @define(order=True)
+... class LeaderboardEntry:
+...     score: int = field(order=Order(descending=True))
+...     timestamp: int | None = field(order=Order(none_last=True))
+
+>>> sorted(
+...     [
+...         LeaderboardEntry(1, 3),
+...         LeaderboardEntry(2, None),
+...         LeaderboardEntry(2, 2),
+...         LeaderboardEntry(2, 1),
+...         LeaderboardEntry(3, None),
+...     ]
+... )
+[LeaderboardEntry(score=3, timestamp=None), LeaderboardEntry(score=2, timestamp=1), LeaderboardEntry(score=2, timestamp=2), LeaderboardEntry(score=2, timestamp=None), LeaderboardEntry(score=1, timestamp=3)]
+```
+
+The *ascending* and *descending* arguments select the field direction, and *none_first* places `None` before all other values.
+The *key* argument applies a key function before ordering.
+Equality continues to compare field values directly and is unaffected by descending or ascending order.
+
 This is especially useful when you have fields with objects that have atypical comparison properties.
 Common examples of such objects are [NumPy arrays](https://github.com/python-attrs/attrs/issues/435).
 

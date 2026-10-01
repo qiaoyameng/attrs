@@ -42,6 +42,7 @@ from attr import validate as validate
 from attr import validators as validators
 from attr import attrib, asdict as asdict, astuple as astuple
 from attr import NothingType as NothingType
+from attr import Order as Order
 
 if sys.version_info >= (3, 11):
     from typing import dataclass_transform
@@ -52,6 +53,8 @@ _T = TypeVar("_T")
 _C = TypeVar("_C", bound=type)
 
 _EqOrderType = bool | Callable[[Any], Any]
+_FieldOrderType = _EqOrderType | Order
+_FieldCmpType = _EqOrderType | Order
 _ValidatorType = Callable[[Any, "Attribute[_T]", _T], Any]
 _CallableConverterType = Callable[[Any], Any]
 _ConverterType = _CallableConverterType | Converter[Any, Any]
@@ -107,7 +110,7 @@ def field(
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
     eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    order: _FieldOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
     type: type | None = ...,
@@ -130,7 +133,7 @@ def field(
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
     eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    order: _FieldOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
     type: type | None = ...,
@@ -153,7 +156,7 @@ def field(
     factory: Callable[[], _T] | None = ...,
     kw_only: bool | None = ...,
     eq: _EqOrderType | None = ...,
-    order: _EqOrderType | None = ...,
+    order: _FieldOrderType | None = ...,
     on_setattr: _OnSetAttrArgType | None = ...,
     alias: str | None = ...,
     type: type | None = ...,

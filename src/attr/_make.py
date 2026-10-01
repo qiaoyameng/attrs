@@ -153,6 +153,7 @@ def attrib(
     .. versionchanged:: 20.3.0 *kw_only* backported to Python 2
     .. versionchanged:: 21.1.0
        *eq*, *order*, and *cmp* also accept a custom callable
+    .. versionadded:: 26.2.0 *order* also accepts an `Order`
     .. versionchanged:: 21.1.0 *cmp* undeprecated
     .. versionadded:: 22.2.0 *alias*
     .. versionchanged:: 25.4.0
@@ -1290,11 +1291,15 @@ def _determine_attrib_eq_order(cmp, eq, order, default_eq):
         msg = "Don't mix `cmp` with `eq' and `order`."
         raise ValueError(msg)
 
-    def decide_callable_or_boolean(value):
+    def decide_callable_or_boolean(value, order_spec=False):
         """
         Decide whether a key function is used.
         """
-        if callable(value):
+        if order_spec and getattr(
+            value, "_is_attrs_order", False
+        ):
+            value, key = True, value
+        elif callable(value):
             value, key = True, value
         else:
             key = None
@@ -1302,6 +1307,9 @@ def _determine_attrib_eq_order(cmp, eq, order, default_eq):
 
     # cmp takes precedence due to bw-compatibility.
     if cmp is not None:
+        if getattr(cmp, "_is_attrs_order", False):
+            return True, None, True, cmp
+
         cmp, cmp_key = decide_callable_or_boolean(cmp)
         return cmp, cmp_key, cmp, cmp_key
 
@@ -1310,12 +1318,16 @@ def _determine_attrib_eq_order(cmp, eq, order, default_eq):
     if eq is None:
         eq, eq_key = default_eq, None
     else:
+        if getattr(eq, "_is_attrs_order", False):
+            msg = "Order can only be used with the order argument."
+            raise TypeError(msg)
+
         eq, eq_key = decide_callable_or_boolean(eq)
 
     if order is None:
         order, order_key = eq, eq_key
     else:
-        order, order_key = decide_callable_or_boolean(order)
+        order, order_key = decide_callable_or_boolean(order, True)
 
     if eq is False and order is True:
         msg = "`order` can only be True if `eq` is True too."
@@ -1781,6 +1793,12 @@ def _make_order(cls, attrs):
     Create ordering methods for *cls* with *attrs*.
     """
     attrs = [a for a in attrs if a.order]
+    order_keys = []
+    for attr in attrs:
+        order_key = attr.order_key
+        if getattr(order_key, "_is_attrs_order", False):
+            order_key = order_key._bind()
+        order_keys.append(order_key)
 
     def attrs_to_tuple(obj):
         """
@@ -1789,7 +1807,8 @@ def _make_order(cls, attrs):
         return tuple(
             key(value) if key else value
             for value, key in (
-                (getattr(obj, a.name), a.order_key) for a in attrs
+                (getattr(obj, attr.name), key)
+                for attr, key in zip(attrs, order_keys, strict=True)
             )
         )
 

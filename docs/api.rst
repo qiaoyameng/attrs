@@ -142,6 +142,9 @@ Helpers
 
 .. autofunction:: attrs.cmp_using
 
+.. autoclass:: attrs.Order
+   :members:
+
 .. autofunction:: attrs.fields
 
    For example:

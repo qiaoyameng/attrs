@@ -513,11 +513,13 @@ def field(
 
             .. seealso:: `comparison`
 
-        order (bool | ~typing.Callable):
+        order (bool | ~typing.Callable | ~attrs.Order):
             If True (default), include this attributes in the generated
             ``__lt__``, ``__le__``, ``__gt__`` and ``__ge__`` methods. To
             override how the attribute value is ordered, pass a callable that
-            takes a single value and returns the value to be ordered.
+            takes a single value and returns the value to be ordered. Pass
+            `attrs.Order` to declare descending ordering and where to place
+            `None`.
 
             .. seealso:: `comparison`
 
@@ -591,6 +593,7 @@ def field(
     .. versionadded:: 20.1.0
     .. versionchanged:: 21.1.0
        *eq*, *order*, and *cmp* also accept a custom callable
+    .. versionadded:: 26.2.0 *order* also accepts an `attrs.Order`
     .. versionadded:: 22.2.0 *alias*
     .. versionadded:: 23.1.0
        The *type* parameter has been re-added; mostly for `attrs.make_class`.

@@ -10,7 +10,7 @@ from functools import partial
 from typing import Callable, Literal, Protocol
 
 from . import exceptions, setters
-from ._cmp import cmp_using
+from ._cmp import Order, cmp_using
 from ._config import get_run_validators, set_run_validators
 from ._funcs import asdict, assoc, astuple, has, resolve_types
 from ._make import (
@@ -49,6 +49,7 @@ __all__ = [
     "Converter",
     "Factory",
     "NothingType",
+    "Order",
     "asdict",
     "assoc",
     "astuple",

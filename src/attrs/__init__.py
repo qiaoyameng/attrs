@@ -19,6 +19,7 @@ from attr import (
     has,
     make_class,
     mutable,
+    Order,
     resolve_types,
     validate,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "Converter",
     "Factory",
     "NothingType",
+    "Order",
     "__author__",
     "__copyright__",
     "__description__",
